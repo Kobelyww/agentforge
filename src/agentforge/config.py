@@ -93,6 +93,14 @@ class ServerConfig(BaseModel):
     log_level: str = "INFO"
     api_key: str | None = None
     rate_limit_rpm: int = 60
+    # ---- auth (all optional; nothing set = open dev mode) ----
+    auth_secret: str | None = None       # JWT signing key
+    admin_username: str = "admin"
+    admin_password: str | None = None    # enables POST /api/auth/login
+    token_ttl_s: int = 12 * 3600
+    # ---- ops ----
+    webhook_url: str | None = None       # POSTed on work-order creation
+    log_file: bool = True                # rotating JSON log under data/logs/
 
 
 class Settings(BaseModel):
@@ -170,6 +178,30 @@ def _default_providers() -> list[ProviderSpec]:
     return specs
 
 
+def _normalize_admin_auth(server: ServerConfig) -> None:
+    """Hash the admin password once and derive a fallback JWT secret.
+
+    Plaintext admin_password (from env/YAML) is replaced by its PBKDF2 hash in
+    memory; tokens stay verifiable across processes in the same deployment by
+    setting AGENTFORGE_AUTH_SECRET explicitly.
+    """
+    if server.admin_password and not _looks_hashed(server.admin_password):
+        from agentforge.server.security import hash_password
+
+        server.admin_password = hash_password(server.admin_password)
+    if server.admin_password and not server.auth_secret:
+        import hashlib
+
+        server.auth_secret = hashlib.sha256(
+            ("agentforge-auth:" + server.admin_password).encode()
+        ).hexdigest()
+
+
+def _looks_hashed(value: str) -> bool:
+    parts = value.split("$")
+    return len(parts) == 2 and len(parts[0]) == 32 and len(parts[1]) == 64
+
+
 def load_settings(config_path: str | os.PathLike[str] | None = None) -> Settings:
     """Load settings from YAML config, falling back to env-var-only defaults.
 
@@ -230,5 +262,15 @@ def load_settings(config_path: str | os.PathLike[str] | None = None) -> Settings
         settings.server.api_key = api_key
     if rpm := os.environ.get("AGENTFORGE_RATE_LIMIT_RPM"):
         settings.server.rate_limit_rpm = int(rpm)
+    if v := os.environ.get("AGENTFORGE_AUTH_SECRET"):
+        settings.server.auth_secret = v
+    if v := os.environ.get("AGENTFORGE_ADMIN_USERNAME"):
+        settings.server.admin_username = v
+    if v := os.environ.get("AGENTFORGE_ADMIN_PASSWORD"):
+        settings.server.admin_password = v
+    if v := os.environ.get("AGENTFORGE_WEBHOOK_URL"):
+        settings.server.webhook_url = v
+
+    _normalize_admin_auth(settings.server)
 
     return settings

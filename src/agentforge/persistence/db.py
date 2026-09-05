@@ -46,6 +46,10 @@ class Database:
             with self.engine.connect() as conn:
                 conn.exec_driver_sql("PRAGMA journal_mode=WAL")
                 conn.exec_driver_sql("PRAGMA foreign_keys=ON")
+        from agentforge.persistence.migrations import run_migrations
+
+        run_migrations(self.engine)
+
         self._factory = sessionmaker(bind=self.engine, expire_on_commit=False)
         self._lock = threading.Lock()
 

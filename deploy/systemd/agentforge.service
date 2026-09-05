@@ -1,0 +1,27 @@
+[Unit]
+Description=AgentForge / ForgeOps industrial agent platform
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=agentforge
+Group=agentforge
+WorkingDirectory=/opt/agentforge
+EnvironmentFile=-/opt/agentforge/.env
+# SQLite is a single-writer store: keep ONE uvicorn worker per database file.
+# Scale by sharding sessions across nodes (Postgres adapter on the roadmap),
+# not by bumping --workers against the same SQLite file.
+ExecStart=/opt/agentforge/.venv/bin/agentforge serve --host 127.0.0.1 --port 8000
+Restart=on-failure
+RestartSec=3
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/agentforge/data
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import sys
+from pathlib import Path
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -30,6 +31,15 @@ def _build_parser() -> argparse.ArgumentParser:
     evaluate.add_argument("--model", default=None, help="provider/model override")
     evaluate.add_argument("--report", default=None, help="write JSON report to this path")
 
+    backup = sub.add_parser("backup", help="online SQLite backup into data/backups/")
+    backup.add_argument("--out", default=None, help="output directory")
+
+    export = sub.add_parser("export", help="export a session transcript")
+    export.add_argument("session_id")
+    export.add_argument("--format", choices=["md", "json"], default="md")
+    export.add_argument("-o", "--out", default=None, help="write to file instead of stdout")
+
+    sub.add_parser("doctor", help="environment self-check")
     sub.add_parser("version", help="print version")
     return parser
 
@@ -62,8 +72,6 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "ingest":
-        from pathlib import Path
-
         from agentforge.config import load_settings
         from agentforge.llm.registry import ProviderRegistry
         from agentforge.persistence.db import Database
@@ -108,6 +116,134 @@ def main(argv: list[str] | None = None) -> int:
         for i, r in enumerate(results, 1):
             print(f"[{i}] {r.document_name} score={r.score:.3f}\n    {r.text[:160]}...")
         return 0
+
+    if args.command == "backup":
+        import datetime
+        import sqlite3
+
+        from agentforge.config import load_settings
+
+        settings = load_settings(args.config)
+        src_path = settings.db_url.replace("sqlite:///", "") or str(
+            settings.data_dir / "agentforge.db"
+        )
+        out_dir = Path(args.out) if args.out else settings.data_dir / "backups"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+        dest = out_dir / f"agentforge-{stamp}.db"
+
+        src_conn = sqlite3.connect(src_path)
+        dst_conn = sqlite3.connect(dest)
+        with dst_conn:
+            src_conn.backup(dst_conn)
+        dst_conn.close()
+        src_conn.close()
+
+        check = sqlite3.connect(dest).execute("PRAGMA integrity_check").fetchone()[0]
+        if check != "ok":
+            print(f"✗ backup failed integrity check: {dest}")
+            return 1
+        print(f"✓ backup written: {dest} ({dest.stat().st_size / 1024:.1f} KB, integrity ok)")
+        return 0
+
+    if args.command == "export":
+        import json as jsonlib
+
+        from agentforge.config import load_settings
+        from agentforge.persistence.db import Database
+
+        settings = load_settings(args.config)
+        db = Database(settings.db_url, settings.data_dir)
+        session = db.get_session(args.session_id)
+        if session is None:
+            print(f"✗ session not found: {args.session_id}")
+            return 1
+        messages = db.list_messages(args.session_id)
+
+        if args.format == "json":
+            content = jsonlib.dumps(
+                {
+                    "session": {"id": session.id, "title": session.title,
+                                "created_at": session.created_at.isoformat()},
+                    "messages": [
+                        {"role": m.role, "content": m.content, "name": m.name,
+                         "tool_calls": m.tool_calls, "meta": m.meta,
+                         "created_at": m.created_at.isoformat()}
+                        for m in messages
+                    ],
+                },
+                ensure_ascii=False, indent=2,
+            )
+        else:
+            lines = [f"# {session.title}", "", f"> session `{session.id}` · exported from AgentForge", ""]
+            for m in messages:
+                if m.role == "user" and (m.meta or {}).get("kind") == "step_instruction":
+                    continue
+                label = {"user": "👤 用户", "assistant": "⚒ 助手", "tool": "🛠 工具"}.get(m.role, m.role)
+                lines.append(f"## {label}" + (f" · {m.name}" if m.name else ""))
+                lines.append("")
+                lines.append(m.content or "(empty)")
+                lines.append("")
+            content = "\n".join(lines)
+
+        if args.out:
+            Path(args.out).write_text(content, encoding="utf-8")
+            print(f"✓ exported to {args.out}")
+        else:
+            print(content)
+        return 0
+
+    if args.command == "doctor":
+        from agentforge.config import load_settings
+        from agentforge.llm.registry import ProviderRegistry
+        from agentforge.persistence.db import Database
+        from agentforge.tools.registry import build_default_registry
+
+        settings = load_settings(args.config)
+        failures = 0
+
+        def emit_check(ok: bool, label: str, detail: str = "", warn: bool = False) -> None:
+            nonlocal failures
+            mark = "✓" if ok else ("⚠" if warn else "✗")
+            if not ok and not warn:
+                failures += 1
+            print(f"{mark} {label}" + (f" — {detail}" if detail else ""))
+
+        emit_check(True, f"config: {settings.config_path or 'env-only defaults'}")
+        try:
+            settings.data_dir.mkdir(parents=True, exist_ok=True)
+            probe = settings.data_dir / ".doctor-probe"
+            probe.write_text("ok", encoding="utf-8")
+            probe.unlink()
+            emit_check(True, f"data dir writable: {settings.data_dir}")
+        except OSError as exc:
+            emit_check(False, "data dir writable", str(exc))
+
+        try:
+            db = Database(settings.db_url, settings.data_dir)
+            emit_check(db.health_check(), "database reachable", settings.db_url or "sqlite")
+            print(f"  · chunks={db.count_chunks()} work_orders={db.count_work_orders()} "
+                  f"sessions={len(db.list_sessions(1000))}")
+        except Exception as exc:  # noqa: BLE001
+            emit_check(False, "database reachable", str(exc))
+
+        registry = ProviderRegistry(settings.providers, settings.default_model)
+        only_mock = registry.names() == ["mock"]
+        emit_check(True, f"providers: {', '.join(registry.names())}",
+               "only the offline mock is configured" if only_mock else "", warn=only_mock)
+
+        tools = build_default_registry(settings, db, registry=registry)
+        emit_check(len(tools.names()) > 0, f"tools: {', '.join(tools.names())}")
+
+        auth_mode = ("jwt" if settings.server.admin_password else "") +                     ("/api-key" if settings.server.api_key else "")
+        emit_check(True, "auth: " + (auth_mode.strip("/") or "open dev mode"),
+               "" if auth_mode else "set AGENTFORGE_ADMIN_PASSWORD or AGENTFORGE_API_KEY for exposure",
+               warn=not auth_mode)
+        emit_check(True, "webhook: " + (settings.server.webhook_url or "not configured"),
+               warn=not settings.server.webhook_url)
+
+        print(f"\n{'✅ environment ready' if failures == 0 else '❌ ' + str(failures) + ' critical failure(s)'}")
+        return 1 if failures else 0
 
     if args.command == "eval":
         from agentforge.agent.core import Agent

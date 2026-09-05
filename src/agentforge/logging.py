@@ -64,12 +64,33 @@ class PlainFormatter(logging.Formatter):
         return base
 
 
-def setup_logging(level: str = "INFO", json_output: bool = False) -> None:
+def setup_logging(
+    level: str = "INFO",
+    json_output: bool = False,
+    log_file: str | None = None,
+) -> None:
+    """Configure root logging: console (+ optional rotating JSON file).
+
+    ``log_file`` enables a 10 MB × 5 rotating handler under data/logs/ so
+    deployments keep structured logs across restarts without a collector.
+    """
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(JsonFormatter() if json_output else PlainFormatter())
     root = logging.getLogger()
     root.handlers = [handler]
     root.setLevel(level.upper())
+
+    if log_file:
+        from logging.handlers import RotatingFileHandler
+        from pathlib import Path
+
+        path = Path(log_file)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        file_handler = RotatingFileHandler(
+            path, maxBytes=10 * 1024 * 1024, backupCount=5, encoding="utf-8"
+        )
+        file_handler.setFormatter(JsonFormatter())
+        root.addHandler(file_handler)
     # Third-party noise reduction
     for noisy in ("httpx", "httpcore", "uvicorn.access", "jieba"):
         logging.getLogger(noisy).setLevel(logging.WARNING)

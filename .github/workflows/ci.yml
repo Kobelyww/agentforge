@@ -39,6 +39,19 @@ jobs:
       - name: Agent eval regression gate (threshold 100% on mock suite)
         run: agentforge eval examples/suites/forgeops.yaml
 
+  dependency-audit:
+    runs-on: ubuntu-latest
+    continue-on-error: true  # report known CVEs without blocking feature flow
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - run: pip install -e '.[dev]' pip-audit
+      - name: Audit Python dependencies for known CVEs
+        run: pip-audit --strict
+
   frontend:
     runs-on: ubuntu-latest
     steps:

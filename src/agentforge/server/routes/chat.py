@@ -19,6 +19,11 @@ logger = logging.getLogger("agentforge.api.chat")
 
 router = APIRouter(prefix="/api", dependencies=[Depends(require_api_key)])
 
+# One active chat stream per session: concurrent writers would interleave the
+# persisted message sequence. Checked-and-set without awaits between them, so
+# the guard is race-free on the event loop; released when the stream ends.
+_busy_sessions: set[str] = set()
+
 
 class CreateSessionRequest(BaseModel):
     title: str = Field(default="新会话", max_length=200)
@@ -89,44 +94,18 @@ async def chat(session_id: str, body: ChatRequest, request: Request):
     session = await asyncio.to_thread(state.db.get_session, session_id)
     if session is None:
         raise HTTPException(404, "session not found")
+    if session_id in _busy_sessions:
+        raise HTTPException(
+            409, "session has an active chat stream; wait for it to finish"
+        )
+    _busy_sessions.add(session_id)
 
     async def event_stream():
-        ACTIVE_STREAMS.inc()
-        queue: asyncio.Queue = asyncio.Queue()
-        _SENTINEL = object()
-
-        async def produce():
-            try:
-                async for event in state.agent.run(
-                    session_id, body.content, model=body.model,
-                    orchestrator=body.orchestrator, auto_approve=body.auto_approve,
-                ):
-                    await queue.put(sse_event(event.type, event.data))
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                logger.exception("chat stream failed")
-                await queue.put(sse_event("error", {"message": "internal error, see server logs"}))
-            finally:
-                await queue.put(_SENTINEL)
-
-        producer = asyncio.create_task(produce())
         try:
-            yield sse_event("open", {"session_id": session_id})
-            while True:
-                try:
-                    item = await asyncio.wait_for(queue.get(), timeout=15.0)
-                except TimeoutError:
-                    yield sse_comment()
-                    continue
-                if item is _SENTINEL:
-                    break
-                yield item
+            async for frame in _run_chat_stream(state, session_id, body):
+                yield frame
         finally:
-            producer.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await producer
-            ACTIVE_STREAMS.dec()
+            _busy_sessions.discard(session_id)
 
     return StreamingResponse(
         event_stream(),
@@ -137,6 +116,46 @@ async def chat(session_id: str, body: ChatRequest, request: Request):
             "X-Accel-Buffering": "no",
         },
     )
+
+
+async def _run_chat_stream(state, session_id: str, body: ChatRequest):
+    """The SSE generator body, split out so the busy-lock wraps it cleanly."""
+    ACTIVE_STREAMS.inc()
+    queue: asyncio.Queue = asyncio.Queue()
+    _SENTINEL = object()
+
+    async def produce():
+        try:
+            async for event in state.agent.run(
+                session_id, body.content, model=body.model,
+                orchestrator=body.orchestrator, auto_approve=body.auto_approve,
+            ):
+                await queue.put(sse_event(event.type, event.data))
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("chat stream failed")
+            await queue.put(sse_event("error", {"message": "internal error, see server logs"}))
+        finally:
+            await queue.put(_SENTINEL)
+
+    producer = asyncio.create_task(produce())
+    try:
+        yield sse_event("open", {"session_id": session_id})
+        while True:
+            try:
+                item = await asyncio.wait_for(queue.get(), timeout=15.0)
+            except TimeoutError:
+                yield sse_comment()
+                continue
+            if item is _SENTINEL:
+                break
+            yield item
+    finally:
+        producer.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await producer
+        ACTIVE_STREAMS.dec()
 
 
 # ---------- discovery ----------

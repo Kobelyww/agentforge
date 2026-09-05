@@ -58,7 +58,8 @@
 - 🗜 **上下文工程**：CJK 感知 token 预算、历史裁剪（保证 tool-call 配对完整性）、超阈值 LLM 滚动摘要
 - 📊 **可观测性**：结构化 JSON 日志（request-id 贯穿）、Prometheus 指标（HTTP/LLM/工具/Agent 迭代全维度）、会话 Trace API
 - 🖥 **全栈 HUD UI**：React 18 + TS，**React-Three-Fiber 3D 设备核心**（lazy + Suspense 分包）、**Canvas 示波器 + 手写 radix-2 FFT**（真实传感器数据 + 峰值保持 + BPFO 标记）、**SVG 径向仪表**（ISO 分区 spring 指针）、**动画 DAG 计划图**（流动虚线）、Framer Motion 全局动效、扫描线/网格 HUD 视觉语言
-- ⚙️ **工程化**：45 个 pytest 用例（含真实 MCP 子进程 IPC 测试）、ruff + mypy 全绿、GitHub Actions CI、Docker 一键部署
+- ⚙️ **工程化**：65 个 pytest 用例（含真实 MCP 子进程 IPC 测试）、ruff + mypy 全绿、GitHub Actions CI（含 pip-audit 依赖审计）、Docker 一键部署
+- 🏭 **生产运维就绪**：JWT 登录（手写 HS256 + PBKDF2，零依赖）+ API Key 双模认证、schema 迁移框架、轮转文件日志、安全响应头、同会话并发锁、工单 Webhook、`agentforge doctor/backup/export` 运维 CLI、nginx/systemd 部署资产 —— 见 [docs/deployment.md](docs/deployment.md)
 
 ## 架构
 
@@ -227,6 +228,7 @@ agentforge/
 
 ## 文档
 
+- [部署与运维](docs/deployment.md) — Docker/systemd/nginx、认证模式、备份监控
 - [前沿技术吸收地图](docs/advanced-agent.md) — 子代理/并行工具/HITL/Reflexion/长期记忆各自落在哪行代码
 - [架构详解](docs/architecture.md) — 模块交互、Plan-and-Execute 时序、数据流
 - [设计决策 (ADR)](docs/decisions.md) — 为什么自研运行时、为什么 SQLite、沙箱威胁模型、failover 为什么不允许部分输出后切换……

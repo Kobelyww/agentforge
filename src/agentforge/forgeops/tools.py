@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 from pathlib import Path
 from typing import Any
@@ -23,6 +24,28 @@ from agentforge.tools.base import Tool, ToolContext, ToolResult, validate_args
 
 _DATA_DIR = Path(__file__).resolve().parent / "data"
 _ALARMS = {"good": 2.8, "allow": 4.5, "alarm": 7.1}  # ISO 10816-3 (rigid, medium machines)
+
+logger = logging.getLogger("agentforge.forgeops")
+
+# Keep references to in-flight webhook tasks so the event loop does not GC them.
+_webhook_tasks: set[asyncio.Task] = set()
+
+
+def _fire_webhook(url: str, payload: dict) -> None:
+    """Best-effort outbound notification; failures are logged, never raised."""
+    import httpx
+
+    async def _post() -> None:
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.post(url, json=payload)
+                resp.raise_for_status()
+        except Exception:  # noqa: BLE001 - integration failures must not break the loop
+            logger.warning("webhook delivery to %s failed", url, exc_info=True)
+
+    task = asyncio.create_task(_post())
+    _webhook_tasks.add(task)
+    task.add_done_callback(_webhook_tasks.discard)
 
 
 async def _maybe_await(value: Any) -> None:
@@ -260,6 +283,13 @@ class CreateWorkOrderTool(Tool):
             "estimated_hours": wo.estimated_hours,
             "approved_via": approval.id if approval else "auto",
         }
+
+        if ctx.settings.server.webhook_url:
+            _fire_webhook(
+                ctx.settings.server.webhook_url,
+                {"event": "work_order.created", "work_order": payload},
+            )
+
         return ToolResult(
             ok=True,
             output=f"工单已创建并通过 Schema 校验: {json.dumps(payload, ensure_ascii=False)}",

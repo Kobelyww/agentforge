@@ -55,6 +55,35 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
         return response
 
 
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Baseline hardening headers on every response.
+
+    CSP is tuned for the bundled SPA: same-origin assets, inline styles
+    (React style props), data: images (emoji favicon), no third-party origins.
+    """
+
+    HEADERS = {
+        "X-Content-Type-Options": "nosniff",
+        "X-Frame-Options": "DENY",
+        "Referrer-Policy": "strict-origin-when-cross-origin",
+        "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+        "Content-Security-Policy": (
+            "default-src 'self'; "
+            "script-src 'self'; "
+            "style-src 'self' 'unsafe-inline'; "
+            "img-src 'self' data: blob:; "
+            "connect-src 'self'; "
+            "frame-ancestors 'none'"
+        ),
+    }
+
+    async def dispatch(self, request: Request, call_next) -> Response:
+        response = await call_next(request)
+        for key, value in self.HEADERS.items():
+            response.headers.setdefault(key, value)
+        return response
+
+
 class TokenBucketRateLimitMiddleware(BaseHTTPMiddleware):
     """Per-client token bucket (keyed by API key else IP).
 

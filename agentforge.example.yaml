@@ -10,6 +10,15 @@ server:
   api_key: null
   # 每客户端每分钟最大请求数（令牌桶限流）
   rate_limit_rpm: 60
+  # 认证：api_key（机器）与 admin_password（人工 JWT 登录）可并存；均空 = 开发模式
+  api_key: null
+  admin_username: admin
+  admin_password: null        # 建议 ${AGENTFORGE_ADMIN_PASSWORD}
+  auth_secret: null           # ${AGENTFORGE_AUTH_SECRET}
+  token_ttl_s: 43200
+  # 运维：工单创建 Webhook / 文件日志轮转
+  webhook_url: null           # ${AGENTFORGE_WEBHOOK_URL}
+  log_file: true
 
 # 默认使用的 provider / model（写法: provider_name/model_name）
 default_model: mock/default

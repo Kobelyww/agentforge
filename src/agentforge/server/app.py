@@ -17,10 +17,15 @@ from agentforge.agent.core import Agent
 from agentforge.config import Settings, load_settings
 from agentforge.llm.base import BaseLLM
 from agentforge.llm.registry import ProviderRegistry
+from agentforge.logging import setup_logging
 from agentforge.persistence.db import Database
 from agentforge.rag.embeddings import build_embedder
 from agentforge.rag.retriever import Retriever
-from agentforge.server.middleware import RequestContextMiddleware, TokenBucketRateLimitMiddleware
+from agentforge.server.middleware import (
+    RequestContextMiddleware,
+    SecurityHeadersMiddleware,
+    TokenBucketRateLimitMiddleware,
+)
 from agentforge.tools.registry import build_default_registry
 
 logger = logging.getLogger("agentforge.app")
@@ -88,6 +93,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 await connection.stop()
             await registry.aclose()
 
+    setup_logging(
+        level=settings.server.log_level,
+        json_output=True,
+        log_file=(
+            str((settings.data_dir / "logs" / "agentforge.log").resolve())
+            if settings.server.log_file
+            else None
+        ),
+    )
+
     app = FastAPI(
         title="AgentForge",
         version=agentforge.__version__,
@@ -96,6 +111,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         lifespan=lifespan,
     )
 
+    app.add_middleware(SecurityHeadersMiddleware)
     app.add_middleware(RequestContextMiddleware)
     app.add_middleware(TokenBucketRateLimitMiddleware, requests_per_minute=settings.server.rate_limit_rpm)
     app.add_middleware(
@@ -107,9 +123,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
 
     from agentforge.forgeops.router import router as forgeops_router
-    from agentforge.server.routes import chat, documents, system
+    from agentforge.server.routes import auth, chat, documents, system
 
     app.include_router(system.router)
+    app.include_router(auth.router)
     app.include_router(chat.router)
     app.include_router(documents.router)
     app.include_router(forgeops_router)
