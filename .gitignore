@@ -17,7 +17,7 @@ node_modules/
 frontend/dist/
 
 # Runtime data
-data/
+/data/
 *.db
 *.db-journal
 *.db-wal

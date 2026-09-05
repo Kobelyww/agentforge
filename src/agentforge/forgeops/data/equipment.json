@@ -1,0 +1,22 @@
+[
+  {
+    "id": "AC-017",
+    "name": "螺杆空压机 AC-017",
+    "model": "KA-75",
+    "location": "3号车间",
+    "rated_rpm": 2960,
+    "rotational_hz": 49.33,
+    "sensor_file": "AC-017_vibration.csv",
+    "status": "alarm"
+  },
+  {
+    "id": "WP-203",
+    "name": "离心水泵 WP-203",
+    "model": "IH-125",
+    "location": "循环水站",
+    "rated_rpm": 1480,
+    "rotational_hz": 24.67,
+    "sensor_file": "WP-203_vibration.csv",
+    "status": "watch"
+  }
+]
