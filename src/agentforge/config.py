@@ -164,6 +164,20 @@ def _default_providers() -> list[ProviderSpec]:
             )
         )
 
+    hermes_key = os.environ.get("NOUS_API_KEY") or os.environ.get("HERMES_API_KEY", "")
+    if hermes_key:
+        specs.append(
+            ProviderSpec(
+                name="hermes",
+                type="openai",
+                base_url=os.environ.get(
+                    "HERMES_BASE_URL", "https://inference-api.nousresearch.com/v1"
+                ),
+                api_key=hermes_key,
+                model=os.environ.get("HERMES_MODEL", "Hermes-4-70B"),
+            )
+        )
+
     anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "")
     if anthropic_key:
         specs.append(
@@ -270,6 +284,11 @@ def load_settings(config_path: str | os.PathLike[str] | None = None) -> Settings
         settings.server.admin_password = v
     if v := os.environ.get("AGENTFORGE_WEBHOOK_URL"):
         settings.server.webhook_url = v
+
+    # Multi-source MCP config: config.yaml ⊂ ~/.agentforge/mcp.json ⊂ ./.mcp.json
+    from agentforge.mcp_config import resolve_mcp_servers
+
+    settings.mcp_servers = resolve_mcp_servers(settings.mcp_servers)
 
     _normalize_admin_auth(settings.server)
 

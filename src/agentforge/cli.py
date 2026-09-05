@@ -39,6 +39,25 @@ def _build_parser() -> argparse.ArgumentParser:
     export.add_argument("--format", choices=["md", "json"], default="md")
     export.add_argument("-o", "--out", default=None, help="write to file instead of stdout")
 
+    mcp = sub.add_parser("mcp", help="manage MCP servers (list/add/remove/test/serve)")
+    mcp_sub = mcp.add_subparsers(dest="mcp_command", required=True)
+    mcp_sub.add_parser("list", help="list configured MCP servers (merged from all sources)")
+    mcp_add = mcp_sub.add_parser("add", help="add an MCP server entry")
+    mcp_add.add_argument("name")
+    mcp_add.add_argument("server_command")
+    mcp_add.add_argument("server_args", nargs="*", default=[])
+    mcp_add.add_argument("--scope", choices=["user", "project"], default="user")
+    mcp_remove = mcp_sub.add_parser("remove", help="remove an MCP server entry")
+    mcp_remove.add_argument("name")
+    mcp_remove.add_argument("--scope", choices=["user", "project"], default="user")
+    mcp_test = mcp_sub.add_parser("test", help="spawn a server and list its tools")
+    mcp_test.add_argument("name")
+    mcp_sub.add_parser("serve", help="expose ForgeOps tools as an MCP server (stdio)")
+
+    chat = sub.add_parser("chat", help="interactive terminal chat (pi-style REPL)")
+    chat.add_argument("--session", default=None, help="resume a session id")
+    chat.add_argument("--orchestrator", choices=["react", "plan_execute"], default=None)
+
     sub.add_parser("doctor", help="environment self-check")
     sub.add_parser("version", help="print version")
     return parser
@@ -192,6 +211,79 @@ def main(argv: list[str] | None = None) -> int:
         else:
             print(content)
         return 0
+
+    if args.command == "mcp":
+        import json as jsonlib
+
+        from agentforge.config import MCPServerSpec, load_settings
+        from agentforge.mcp_config import (
+            add_mcp_server,
+            read_mcp_file,
+            remove_mcp_server,
+            resolve_mcp_servers,
+        )
+
+        settings = load_settings(args.config)
+
+        if args.mcp_command == "list":
+            from agentforge.mcp_config import project_mcp_path, read_mcp_file, user_mcp_path
+
+            merged = resolve_mcp_servers(settings.mcp_servers)
+            file_names = ({s.name for s in read_mcp_file(user_mcp_path())}
+                          | {s.name for s in read_mcp_file(project_mcp_path())})
+            if not merged:
+                print("(no MCP servers configured — use 'agentforge mcp add' or drop a .mcp.json)")
+            for spec in merged:
+                origin = "file" if spec.name in file_names else "yaml"
+                print(f"✓ {spec.name:<18} {spec.command} {' '.join(spec.args)}  [{origin}]{' (disabled)' if not spec.enabled else ''}")
+            return 0
+        if args.mcp_command == "add":
+            path = add_mcp_server(args.name, args.server_command, list(args.server_args), scope=args.scope)
+            print(f"✓ added {args.name} → {path}")
+            merged = resolve_mcp_servers(settings.mcp_servers)
+            spec = next(sp for sp in merged if sp.name == args.name)
+            print(f"  {spec.command} {' '.join(spec.args)}")
+            return 0
+        if args.mcp_command == "remove":
+            removed = remove_mcp_server(args.name, scope=args.scope)
+            print(f"✓ removed {args.name}" if removed else f"✗ {args.name} not found in scope {args.scope}")
+            return 0 if removed else 1
+        if args.mcp_command == "test":
+            by_name = {spec.name: spec for spec in resolve_mcp_servers(settings.mcp_servers)}
+            target_spec: MCPServerSpec | None = by_name.get(args.name)
+            if target_spec is None:
+                print(f"✗ server {args.name!r} not configured")
+                return 1
+
+            async def _test():
+                from agentforge.mcp_client import MCPConnection
+
+                conn = MCPConnection(target_spec.name, target_spec.command, target_spec.args, target_spec.env)
+                try:
+                    await conn.start()
+                    tools = await conn.list_tools()
+                    print(f"✓ {target_spec.name}: {len(tools)} tools")
+                    for t in tools:
+                        print(f"  · {t['name']} — {t.get('description', '')[:60]}")
+                finally:
+                    await conn.stop()
+
+            asyncio.run(_test())
+            return 0
+        if args.mcp_command == "serve":
+            from agentforge.mcp_server import main as serve_main
+
+            return serve_main()
+        return 1
+
+    if args.command == "chat":
+        from agentforge.chat_repl import chat_repl
+        from agentforge.config import load_settings
+
+        settings = load_settings(args.config)
+        return asyncio.run(
+            chat_repl(settings, args.session, args.orchestrator or settings.agent.orchestrator)
+        )
 
     if args.command == "doctor":
         from agentforge.config import load_settings

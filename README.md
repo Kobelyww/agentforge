@@ -148,19 +148,36 @@ agentforge search "轴承更换 SOP"             # 检索测试
 | OpenAI 兼容 | `OPENAI_API_KEY` + `OPENAI_BASE_URL` | OpenAI / DeepSeek / Kimi / Qwen / vLLM / Ollama |
 | 智谱 GLM | `GLM_API_KEY` | bigmodel.cn |
 | **华为云 ModelArts MaaS** | `MODELARTS_API_KEY` + `MODELARTS_BASE_URL` | OpenAI 兼容端点 |
+| **Nous Hermes** | `NOUS_API_KEY` + `HERMES_MODEL` | OpenAI 兼容端点 |
 | Anthropic | `ANTHROPIC_API_KEY` | Messages API |
 
-### 挂载外部 MCP 工具
+### MCP：既能接入，也能被接入（双向）
 
-```yaml
-mcp_servers:
-  - name: maintenance_calc
-    command: python
-    args: [examples/mcp_servers/maintenance_calculator.py]
+```bash
+# 接入外部工具：三源配置（yaml ⊂ ~/.agentforge/mcp.json ⊂ ./.mcp.json，Claude Code 兼容格式）
+agentforge mcp add fetch uvx mcp-server-fetch
+agentforge mcp list && agentforge mcp test fetch
+
+# 反向：把 ForgeOps 能力暴露为 MCP Server，挂进 Claude Desktop / Cursor
+agentforge mcp serve
 ```
 
-启动后外部工具自动注册为 `mcp__maintenance_calc__bearing_fault_frequencies` 等，
-Agent 按需调用；Server 进程崩溃仅降级该工具，平台不受影响。
+外部工具自动注册为 `mcp__<server>__<tool>`，故障仅降级该工具；`mcp serve`
+将 `sensor_analysis / rag_search / create_work_order` 提供给任意 MCP 客户端
+（`python_repl` 刻意不外露）。详见 [docs/mcp.md](docs/mcp.md)。
+
+### 终端 REPL（pi 风格）
+
+```bash
+agentforge chat --orchestrator plan_execute
+you> 诊断 AC-017 振动报警
+📋 计划：知识检索 → 并行诊断 → 诊断结论
+  🛠 dispatch_subagent …  (并行专家子代理)
+⚠ HITL 创建 P2 级维修工单需要人工批准
+批准执行? [y/N] y
+```
+
+斜杠命令 `/help /tools /model /orchestrator /sessions /trace /auto /export`。
 
 ## 评测与质量门禁
 
@@ -229,6 +246,7 @@ agentforge/
 ## 文档
 
 - [部署与运维](docs/deployment.md) — Docker/systemd/nginx、认证模式、备份监控
+- [MCP 集成指南](docs/mcp.md) — 双向 MCP：三源配置 / CLI 管理 / Agent-as-MCP-Server / Claude Desktop 集成
 - [前沿技术吸收地图](docs/advanced-agent.md) — 子代理/并行工具/HITL/Reflexion/长期记忆各自落在哪行代码
 - [架构详解](docs/architecture.md) — 模块交互、Plan-and-Execute 时序、数据流
 - [设计决策 (ADR)](docs/decisions.md) — 为什么自研运行时、为什么 SQLite、沙箱威胁模型、failover 为什么不允许部分输出后切换……
