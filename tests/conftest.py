@@ -34,7 +34,7 @@ async def client(settings):
         yield c
 
 
-def parse_sse(text: str) -> list[tuple[str, dict]]:
+def _parse_sse(text: str) -> list[tuple[str, dict]]:
     """Parse an SSE body into (event, data) tuples."""
     events: list[tuple[str, dict]] = []
     for frame in text.split("\n\n"):
@@ -49,3 +49,8 @@ def parse_sse(text: str) -> list[tuple[str, dict]]:
                 break
         events.append((etype, data))
     return events
+
+
+@pytest.fixture()
+def parse_sse():
+    return _parse_sse

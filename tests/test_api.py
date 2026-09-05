@@ -1,7 +1,6 @@
 """HTTP API: system endpoints, sessions, SSE chat, documents, auth, rate limit, trace, ForgeOps."""
 
 import httpx
-from tests.conftest import parse_sse
 
 
 async def test_health_and_readiness(client):
@@ -40,7 +39,7 @@ async def test_session_crud(client):
     assert r.status_code == 404
 
 
-async def test_chat_react_stream_with_tool(client):
+async def test_chat_react_stream_with_tool(client, parse_sse):
     sid = (await client.post("/api/sessions", json={})).json()["id"]
     r = await client.post(
         f"/api/sessions/{sid}/chat", json={"content": "帮我计算 55*66"}
