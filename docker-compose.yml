@@ -1,0 +1,20 @@
+services:
+  agentforge:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      AGENTFORGE_LOG_LEVEL: INFO
+      # 接入真实模型时取消注释（也可用 env_file: .env）
+      # OPENAI_API_KEY: ${OPENAI_API_KEY}
+      # OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      # GLM_API_KEY: ${GLM_API_KEY}
+      # MODELARTS_API_KEY: ${MODELARTS_API_KEY}
+      # MODELARTS_BASE_URL: ${MODELARTS_BASE_URL:-https://api.modelarts-maas.com/v1}
+      # AGENTFORGE_API_KEY: ${AGENTFORGE_API_KEY}   # 配置后 /api/* 需要 X-API-Key
+    volumes:
+      - agentforge-data:/app/data
+    restart: unless-stopped
+
+volumes:
+  agentforge-data:

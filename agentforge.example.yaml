@@ -1,0 +1,80 @@
+# ===== AgentForge 配置文件示例 =====
+# 复制为 config.yaml（或通过 AGENTFORGE_CONFIG 指定路径）。
+# ${VAR} 语法会从环境变量插值；未配置任何 API Key 时内置 Mock Provider 仍可完整运行。
+
+server:
+  host: 0.0.0.0
+  port: 8000
+  log_level: INFO
+  # 配置后所有 /api/* 接口要求请求头 X-API-Key
+  api_key: null
+  # 每客户端每分钟最大请求数（令牌桶限流）
+  rate_limit_rpm: 60
+
+# 默认使用的 provider / model（写法: provider_name/model_name）
+default_model: mock/default
+
+# 故障转移顺序：preferred provider 失败（限流/5xx/超时）时依次尝试
+fallback_chain: []
+
+providers:
+  # 内置离线 Mock —— 零配置演示/测试用，可模拟工具调用与流式输出
+  - name: mock
+    type: mock
+    model: default
+
+  # OpenAI 兼容协议：同样适用于 GLM / Kimi / DeepSeek / Qwen / vLLM / Ollama 等
+  - name: openai
+    type: openai
+    base_url: ${OPENAI_BASE_URL:https://api.openai.com/v1}
+    api_key: ${OPENAI_API_KEY:}
+    model: ${OPENAI_MODEL:gpt-4o-mini}
+
+  - name: glm
+    type: openai
+    base_url: https://open.bigmodel.cn/api/paas/v4
+    api_key: ${GLM_API_KEY:}
+    model: ${GLM_MODEL:glm-4-plus}
+
+  # 华为云 ModelArts MaaS（OpenAI 兼容）
+  - name: modelarts
+    type: openai
+    base_url: ${MODELARTS_BASE_URL:https://api.modelarts-maas.com/v1}
+    api_key: ${MODELARTS_API_KEY:}
+    model: ${MODELARTS_MODEL:DeepSeek-V3}
+
+  - name: anthropic
+    type: anthropic
+    base_url: https://api.anthropic.com
+    api_key: ${ANTHROPIC_API_KEY:}
+    model: ${ANTHROPIC_MODEL:claude-sonnet-4-5}
+
+agent:
+  # 单轮对话内 ReAct 最大迭代次数
+  max_iterations: 8
+  # 上下文 token 预算（估算值），超出后触发历史裁剪/摘要
+  context_budget_tokens: 12000
+  # 历史超过该 token 数时触发 LLM 摘要压缩
+  summary_threshold_tokens: 8000
+  # 本次部署启用的工具（留空 = 全部启用）
+  enabled_tools: [python_repl, web_fetch, rag_search]
+
+tools:
+  python_repl:
+    timeout_seconds: 20
+    memory_limit_mb: 512
+    cpu_limit_seconds: 10
+  web_fetch:
+    timeout_seconds: 15
+    max_bytes: 2097152
+    # 域名白名单，留空 = 不限制
+    allowed_domains: []
+
+rag:
+  chunk_size: 800
+  chunk_overlap: 100
+  top_k: 5
+  # hybrid | vector | bm25
+  search_mode: hybrid
+  # embeddings: auto（配置了 provider 则用之，否则本地 hashing embedding）
+  embedder: auto
