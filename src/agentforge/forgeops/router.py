@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import pathlib
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from agentforge.forgeops.tools import load_equipment
 from agentforge.server.auth import require_api_key
+
+_DATA_DIR = pathlib.Path(__file__).resolve().parent / "data"
 
 router = APIRouter(prefix="/api/forgeops", dependencies=[Depends(require_api_key)])
 
@@ -44,6 +47,47 @@ async def update_workorder_status(code: str, request: Request):
     if updated is None:
         raise HTTPException(404, "work order not found")
     return _wo_dict(updated)
+
+
+# ---------- raw waveform for the UI oscilloscope ----------
+@router.get("/equipment/{equipment_id}/waveform")
+async def equipment_waveform(equipment_id: str, request: Request, points: int = 1600):
+    """Time-domain vibration waveform for the frontend oscilloscope.
+
+    Downsampled server-side with numpy (stride sampling preserves the shape
+    of the signal for display; the frontend does its own FFT for spectrum).
+    """
+    import numpy as np
+
+    equipment = next((e for e in load_equipment() if e["id"] == equipment_id.upper()), None)
+    if equipment is None:
+        raise HTTPException(404, "unknown equipment")
+    csv_path = _DATA_DIR / "sensors" / equipment["sensor_file"]
+    if not csv_path.is_file():
+        raise HTTPException(404, "no sensor data for this equipment")
+
+    def _load():
+        raw = np.genfromtxt(csv_path, delimiter=",", names=True)
+        t = np.asarray(raw["time_s"], dtype=np.float64)
+        x = np.asarray(raw["vibration_mm_s"], dtype=np.float64)
+        n = max(2, min(points, len(t)))
+        stride = max(1, len(t) // n)
+        t, x = t[::stride][:n], x[::stride][:n]
+        rms = float(np.sqrt(np.mean(np.asarray(raw["vibration_mm_s"]) ** 2)))
+        return t.tolist(), x.tolist(), rms, equipment["rotational_hz"]
+
+    t, x, rms, rot_hz = await asyncio.to_thread(_load)
+    return {
+        "equipment_id": equipment["id"],
+        "time_s": [round(v, 6) for v in t],
+        "vibration_mm_s": [round(v, 6) for v in x],
+        "rms_mm_s": round(rms, 3),
+        "iso10816_status": (
+            "good" if rms <= 2.8 else "allow" if rms <= 4.5
+            else "alarm" if rms <= 7.1 else "danger"
+        ),
+        "rotational_hz": rot_hz,
+    }
 
 
 # ---------- human-in-the-loop approvals ----------

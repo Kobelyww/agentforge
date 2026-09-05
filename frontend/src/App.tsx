@@ -1,15 +1,20 @@
-import { useEffect, useState } from "react";
-import Markdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { Suspense, lazy, useEffect, useState } from "react";
+import { motion } from "framer-motion";
+import { Markdown, remarkGfm } from "./lazyMarkdown";
 import { api } from "./api";
 import Sidebar from "./components/Sidebar";
 import ChatView from "./components/ChatView";
 import DocPanel from "./components/DocPanel";
 import WorkbenchPanel from "./components/WorkbenchPanel";
+import StatusRail from "./components/StatusRail";
+import MissionDeck from "./components/MissionDeck";
 import { useChat, type UIMessage } from "./hooks/useChat";
 import type { Equipment, ProviderInfo, Session, ToolInfo } from "./types";
 
 type Panel = null | "docs" | "workbench";
+
+// 3D 场景按需加载（three 体积大，首屏不阻塞）
+const HeroSceneLazy = lazy(() => import("./components/HeroScene"));
 
 export default function App() {
   const [sessions, setSessions] = useState<Session[]>([]);
@@ -51,7 +56,7 @@ export default function App() {
           uiMessages.push({ id: msg.id, role: "user", content: msg.content });
         } else if (msg.role === "assistant") {
           const kind = (msg.meta as { kind?: string } | null)?.kind;
-          if (kind === "plan") continue; // plan renders via the timeline instead
+          if (kind === "plan") continue;
           uiMessages.push({
             id: msg.id, role: "assistant", content: msg.content, meta: msg.meta,
             toolCalls: (msg.tool_calls ?? []).map((c) => ({
@@ -99,7 +104,6 @@ export default function App() {
     setPanel(null);
     setOrchestrator("plan_execute");
     await newSession();
-    // HITL demo: P1/P2 工单创建前需要人工批准
     chat.send(
       `诊断 ${equipment.id} ${equipment.name} 的运行状态：请检索知识库、分析振动数据，给出结论并生成维修工单`,
       null, "plan_execute", false,
@@ -112,34 +116,37 @@ export default function App() {
 
   return (
     <div className="app">
-      <Sidebar
-        sessions={sessions}
-        activeId={activeId}
-        tools={tools}
-        providers={providers}
-        model={model}
-        orchestrator={orchestrator}
-        onOrchestratorChange={setOrchestrator}
-        onModelChange={setModel}
-        onNewSession={newSession}
-        onOpenSession={openSession}
-        onDeleteSession={removeSession}
-        onToggleDocs={() => setPanel((p) => (p === "docs" ? null : "docs"))}
-        docsOpen={panel === "docs"}
-        onToggleWorkbench={() => setPanel((p) => (p === "workbench" ? null : "workbench"))}
-        workbenchOpen={panel === "workbench"}
-      />
-      <main className="main">
-        {activeId ? (
-          <ChatView chat={chat} onStop={chat.stop} model={model} orchestrator={orchestrator} sessionId={activeId} onDecide={decideApproval} />
-        ) : (
-          <Welcome
-            onNewSession={newSession}
-            onOpenWorkbench={() => setPanel("workbench")}
-            toolNames={tools.map((t) => t.name)}
-          />
-        )}
-      </main>
+      <StatusRail sessionId={activeId} />
+      <div className="app-body">
+        <Sidebar
+          sessions={sessions}
+          activeId={activeId}
+          tools={tools}
+          providers={providers}
+          model={model}
+          orchestrator={orchestrator}
+          onOrchestratorChange={setOrchestrator}
+          onModelChange={setModel}
+          onNewSession={newSession}
+          onOpenSession={openSession}
+          onDeleteSession={removeSession}
+          onToggleDocs={() => setPanel((p) => (p === "docs" ? null : "docs"))}
+          docsOpen={panel === "docs"}
+          onToggleWorkbench={() => setPanel((p) => (p === "workbench" ? null : "workbench"))}
+          workbenchOpen={panel === "workbench"}
+        />
+        <main className="main">
+          {activeId ? (
+            <ChatView chat={chat} onStop={chat.stop} model={model} orchestrator={orchestrator} sessionId={activeId} onDecide={decideApproval} />
+          ) : (
+            <Welcome
+              onNewSession={newSession}
+              onOpenWorkbench={() => setPanel("workbench")}
+              toolNames={tools.map((t) => t.name)}
+            />
+          )}
+        </main>
+      </div>
       {panel === "docs" && <DocPanel onClose={() => setPanel(null)} />}
       {panel === "workbench" && (
         <WorkbenchPanel onSelectScenario={diagnoseEquipment} onClose={() => setPanel(null)} />
@@ -159,26 +166,59 @@ function Welcome({
 }) {
   return (
     <div className="welcome">
-      <div className="welcome-logo">⚒</div>
-      <h1>ForgeOps</h1>
-      <p className="welcome-sub">
-        工业设备智能运维 Agent · 自研 AgentForge 引擎（Plan-and-Execute / MCP / RAG / 沙箱工具）
-      </p>
+      <div className="welcome-hero">
+        <div className="hero-text">
+          <div className="hero-eyebrow">// INDUSTRIAL AGENT OPERATING SYSTEM</div>
+          <h1 className="glow-text">FORGEOPS</h1>
+          <p className="welcome-sub">
+            工业设备智能运维 Agent · 自研 AgentForge 引擎
+            <br />
+            <span className="hero-tags">
+              PLAN-EXECUTE · MULTI-AGENT · MCP · HYBRID-RAG · SANDBOX · HITL
+            </span>
+          </p>
+          <div className="welcome-actions">
+            <button className="btn-primary" onClick={onOpenWorkbench}>🏭 打开设备遥测台</button>
+            <button className="btn-ghost" onClick={onNewSession}>＋ 新建会话</button>
+          </div>
+        </div>
+        <Suspense fallback={<div className="hero-loading">INITIALIZING 3D CORE…</div>}>
+          <HeroSceneLazy />
+        </Suspense>
+      </div>
+
+      <MissionDeck />
+
       <div className="welcome-cards">
-        <div className="welcome-card" onClick={onOpenWorkbench}>
-          <h3>🏭 设备诊断</h3>
-          <p>打开设备台账，一键诊断：知识检索 → 振动数据分析 → 结论 → 自动生成维修工单</p>
-        </div>
-        <div className="welcome-card" onClick={onNewSession}>
+        <motion.div
+          className="welcome-card"
+          onClick={onNewSession}
+          whileHover={{ y: -3, borderColor: "rgba(79,143,247,0.7)" }}
+          transition={{ type: "spring", stiffness: 300, damping: 20 }}
+        >
           <h3>🧠 规划模式</h3>
-          <p>侧栏切换到「规划模式」，体验 Plan-and-Execute 编排与决策链路 Trace</p>
-        </div>
-        <div className="welcome-card" onClick={onNewSession}>
+          <p>侧栏切换到「规划模式」，体验 Plan-Execute 编排、多智能体扇出与决策链路 Trace</p>
+        </motion.div>
+        <motion.div
+          className="welcome-card"
+          onClick={onNewSession}
+          whileHover={{ y: -3, borderColor: "rgba(79,143,247,0.7)" }}
+          transition={{ type: "spring", stiffness: 300, damping: 20 }}
+        >
           <h3>🧮 沙箱计算</h3>
           <p>输入「计算 128*365+42」，观察 python_repl 沙箱实时执行</p>
-        </div>
+        </motion.div>
+        <motion.div
+          className="welcome-card"
+          onClick={onNewSession}
+          whileHover={{ y: -3, borderColor: "rgba(79,143,247,0.7)" }}
+          transition={{ type: "spring", stiffness: 300, damping: 20 }}
+        >
+          <h3>📚 知识库检索</h3>
+          <p>上传文档后问「检索一下手册里的轴承更换 SOP」，观察混合检索</p>
+        </motion.div>
       </div>
-      <p className="welcome-tools">已启用工具：{toolNames.join(" · ") || "…"}</p>
+      <p className="welcome-tools">TOOLCHAIN // {toolNames.join(" · ") || "…"}</p>
     </div>
   );
 }

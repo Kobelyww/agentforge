@@ -127,6 +127,16 @@ export type AgentEvent =
   | { type: "error"; message: string }
   | { type: "done"; session_id: string; elapsed_ms: number; final_text?: string };
 
+// Oscilloscope telemetry
+export interface WaveformData {
+  equipment_id: string;
+  time_s: number[];
+  vibration_mm_s: number[];
+  rms_mm_s: number;
+  iso10816_status: string;
+  rotational_hz: number;
+}
+
 // Trace API
 export interface TraceStep {
   step_id: string;

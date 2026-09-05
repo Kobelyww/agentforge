@@ -65,15 +65,24 @@ export function useChat(sessionId: string | null, onSessionUpdated: () => void) 
     (event: AgentEvent) => {
       switch (event.type) {
         case "user_message":
-          setState((prev) => ({
-            ...prev,
-            plan: null,
-            steps: [],
-            messages: [
-              ...prev.messages,
-              { id: event.message.id, role: "user", content: event.message.content },
-            ],
-          }));
+          setState((prev) => {
+            // 乐观更新已插入本地用户消息时，仅回填真实 id
+            const localIdx = prev.messages.findIndex(
+              (m) => m.id.startsWith("local-user-") && m.content === event.message.content,
+            );
+            let messages = prev.messages;
+            if (localIdx !== -1) {
+              messages = prev.messages.map((m, i) =>
+                i === localIdx ? { ...m, id: event.message.id } : m,
+              );
+            } else {
+              messages = [
+                ...prev.messages,
+                { id: event.message.id, role: "user" as const, content: event.message.content },
+              ];
+            }
+            return { ...prev, plan: null, steps: [], messages };
+          });
           break;
         case "phase":
           setState((prev) => ({ ...prev, phase: event.phase }));
@@ -171,6 +180,7 @@ export function useChat(sessionId: string | null, onSessionUpdated: () => void) 
       if (!sessionId || state.busy || !content.trim()) return;
       const controller = new AbortController();
       abortRef.current = controller;
+      const stamp = Date.now();
       setState((prev) => ({
         ...prev,
         busy: true,
@@ -179,7 +189,8 @@ export function useChat(sessionId: string | null, onSessionUpdated: () => void) 
         steps: [],
         messages: [
           ...prev.messages,
-          { id: `local-${Date.now()}`, role: "assistant", content: "", streaming: true },
+          { id: `local-user-${stamp}`, role: "user" as const, content },
+          { id: `local-assistant-${stamp}`, role: "assistant", content: "", streaming: true },
         ],
       }));
       try {

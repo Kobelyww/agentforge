@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import Markdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { motion } from "framer-motion";
+import { Markdown, remarkGfm } from "../lazyMarkdown";
 import type { useChat } from "../hooks/useChat";
 import ToolCallCard from "./ToolCallCard";
-import { PlanTimeline, WorkOrderCard } from "./PlanTimeline";
+import PlanGraph from "./PlanGraph";
 import TracePanel from "./TracePanel";
 
 interface Props {
@@ -16,11 +16,11 @@ interface Props {
 }
 
 const PHASE_LABEL: Record<string, string> = {
-  planning: "📋 规划中…",
-  executing: "⚙️ 分步执行中…",
-  synthesizing: "🧩 汇总结论中…",
-  critiquing: "🧐 质量审核中…",
-  critiquing_revise: "🔁 审核未通过，修订中…",
+  planning: "📋 PLANNING · 任务规划中",
+  executing: "⚙️ EXECUTING · 分步执行中",
+  synthesizing: "🧩 SYNTHESIZING · 汇总结论中",
+  critiquing: "🧐 CRITIC · 质量审核中",
+  critiquing_revise: "🔁 REVISING · 审核未通过，修订中",
   critiquing_done: "",
 };
 
@@ -50,19 +50,24 @@ export default function ChatView({ chat, onStop, model, orchestrator, sessionId,
   return (
     <div className="chat">
       <div className="chat-toolbar">
-        <span className="phase-label">
-          {chat.phase ? PHASE_LABEL[chat.phase] ?? chat.phase : ""}
-        </span>
-        <button className="btn-ghost small" onClick={() => setTraceOpen(true)}>🔍 查看决策链路</button>
+        <span className="phase-label">{chat.phase ? PHASE_LABEL[chat.phase] ?? chat.phase : ""}</span>
+        {chat.busy && <span className="busy-bars"><i /><i /><i /></span>}
+        <button className="btn-ghost small" onClick={() => setTraceOpen(true)}>🔍 决策链路 TRACE</button>
       </div>
 
       <div className="messages">
         {chat.plan && chat.steps.length > 0 && (
-          <PlanTimeline plan={chat.plan} steps={chat.steps} />
+          <PlanGraph plan={chat.plan} steps={chat.steps} />
         )}
 
-        {chat.messages.map((m) => (
-          <div key={m.id} className={`msg msg-${m.role}`}>
+        {chat.messages.map((m, idx) => (
+          <motion.div
+            key={m.id}
+            className={`msg msg-${m.role}`}
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.25, delay: idx === chat.messages.length - 1 ? 0 : 0.02 }}
+          >
             <div className="msg-avatar">{m.role === "user" ? "你" : "⚒"}</div>
             <div className="msg-body">
               {m.toolCalls && m.toolCalls.length > 0 && (
@@ -92,29 +97,30 @@ export default function ChatView({ chat, onStop, model, orchestrator, sessionId,
                 </div>
               )}
             </div>
-          </div>
+          </motion.div>
         ))}
+
         {chat.approval && (
-          <div className="approval-card">
-            <div className="approval-header">⚠ 需要人工批准 · Human-in-the-Loop</div>
+          <motion.div
+            className="approval-card"
+            initial={{ opacity: 0, scale: 0.96 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ type: "spring", stiffness: 280, damping: 22 }}
+          >
+            <div className="approval-header">⚠ HUMAN-IN-THE-LOOP · 需要人工批准</div>
             <div className="approval-message">{chat.approval.message}</div>
             <pre className="approval-payload">{JSON.stringify(chat.approval.payload, null, 2)}</pre>
             <div className="approval-actions">
-              <button
-                className="btn-primary"
-                onClick={() => onDecide(chat.approval!.approval_id, "approved")}
-              >
-                ✓ 批准
+              <button className="btn-primary" onClick={() => onDecide(chat.approval!.approval_id, "approved")}>
+                ✓ 批准执行
               </button>
-              <button
-                className="btn-stop"
-                onClick={() => onDecide(chat.approval!.approval_id, "rejected")}
-              >
+              <button className="btn-stop" onClick={() => onDecide(chat.approval!.approval_id, "rejected")}>
                 ✗ 拒绝
               </button>
             </div>
-          </div>
+          </motion.div>
         )}
+
         {chat.error && <div className="chat-error">⚠ {chat.error}</div>}
         <div ref={bottomRef} />
       </div>
@@ -140,6 +146,47 @@ export default function ChatView({ chat, onStop, model, orchestrator, sessionId,
       </div>
 
       {traceOpen && sessionId && <TracePanel sessionId={sessionId} onClose={() => setTraceOpen(false)} />}
+    </div>
+  );
+}
+
+const PRIORITY_COLOR: Record<string, string> = {
+  P1: "#f85149", P2: "#d29922", P3: "#4f8ff7", P4: "#8b949e",
+};
+
+function WorkOrderCard({ toolCall }: { toolCall: { arguments: Record<string, unknown>; output?: string } }) {
+  const args = toolCall.arguments as {
+    code?: string; equipment_id?: string; title?: string; fault_type?: string;
+    confidence?: number; priority?: string; actions?: string[]; parts?: string[];
+    estimated_hours?: number;
+  } | undefined;
+  if (!args || (!args.code && !args.title)) return null;
+  const codeMatch = toolCall.output?.match(/WO-\d{6}/);
+  return (
+    <div className="wo-card">
+      <div className="wo-header">
+        <span className="wo-priority" style={{ background: PRIORITY_COLOR[args.priority ?? "P3"] }}>
+          {args.priority ?? "P3"}
+        </span>
+        <span className="wo-code">{codeMatch ? codeMatch[0] : "WO-PENDING"}</span>
+        <span className="wo-equipment">{args.equipment_id}</span>
+      </div>
+      <div className="wo-title">{args.title}</div>
+      <div className="wo-meta">
+        故障类型 <code>{args.fault_type}</code> · 置信度{" "}
+        <b>{typeof args.confidence === "number" ? (args.confidence * 100).toFixed(0) + "%" : "-"}</b>
+        {typeof args.estimated_hours === "number" && <> · 预计停机 <b>{args.estimated_hours}h</b></>}
+      </div>
+      {Array.isArray(args.actions) && args.actions.length > 0 && (
+        <ul className="wo-actions">
+          {args.actions.map((a, i) => (
+            <li key={i}>{a}</li>
+          ))}
+        </ul>
+      )}
+      {Array.isArray(args.parts) && args.parts.length > 0 && (
+        <div className="wo-parts">备件：{args.parts.join("、")}</div>
+      )}
     </div>
   );
 }

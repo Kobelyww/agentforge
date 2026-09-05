@@ -167,3 +167,17 @@ async def test_memory_recalled_into_plan_execute(settings):
     assert "memory_recalled" in types
     recalled = next(e for e in events if e.type == "memory_recalled")
     assert any("WO-000001" in m for m in recalled.data["memories"])
+
+
+async def test_waveform_endpoint(client):
+    r = await client.get("/api/forgeops/equipment/AC-017/waveform?points=800")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["equipment_id"] == "AC-017"
+    assert 0 < len(body["time_s"]) <= 800
+    assert len(body["time_s"]) == len(body["vibration_mm_s"])
+    assert body["rms_mm_s"] > 4.0  # AC-017 is in alarm
+    assert body["iso10816_status"] == "alarm"
+
+    r = await client.get("/api/forgeops/equipment/NOPE/waveform")
+    assert r.status_code == 404

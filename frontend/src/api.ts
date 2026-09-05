@@ -1,4 +1,4 @@
-import type { AgentEvent, DocInfo, Equipment, ProviderInfo, Session, SessionTrace, ToolInfo, WorkOrder } from "./types";
+import type { AgentEvent, DocInfo, Equipment, ProviderInfo, Session, SessionTrace, ToolInfo, WaveformData, WorkOrder } from "./types";
 
 const BASE = "";
 
@@ -35,6 +35,8 @@ export const api = {
   listEquipment: () => request<Equipment[]>("/api/forgeops/equipment"),
   listWorkOrders: () => request<WorkOrder[]>("/api/forgeops/workorders"),
   getTrace: (sessionId: string) => request<SessionTrace>(`/api/sessions/${sessionId}/trace`),
+  getWaveform: (equipmentId: string) =>
+    request<WaveformData>(`/api/forgeops/equipment/${equipmentId}/waveform?points=1600`),
   decideApproval: (approvalId: string, decision: "approved" | "rejected") =>
     request(`/api/forgeops/approvals/${approvalId}/decide`, {
       method: "POST",

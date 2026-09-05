@@ -14,6 +14,14 @@
 
 **零配置即可运行**：不配置任何 LLM API Key，内置 Mock Provider 会完整演示规划、工具调用与流式输出全流程。
 
+| ![遥测甲板](docs/screenshots/hero-telemetry.png) |
+|---|
+| **遥测甲板** — Three.js 3D 设备核心 · Canvas 振动示波器（前端 FFT + 峰值保持）· ISO 10816 径向仪表盘 · HUD 状态栏 |
+
+| ![多智能体诊断](docs/screenshots/chat-diagnosis.png) |
+|---|
+| **多智能体诊断** — 并行子代理工具卡片 · Schema 校验的 P2 维修工单 · 流式结论 |
+
 </div>
 
 ---
@@ -49,7 +57,7 @@
 - 📚 **混合检索 RAG**：BM25（jieba 中文分词）+ 向量检索（本地确定性 Hashing Embedding 兜底 / Provider Embedding），RRF 融合，Markdown 结构感知分块
 - 🗜 **上下文工程**：CJK 感知 token 预算、历史裁剪（保证 tool-call 配对完整性）、超阈值 LLM 滚动摘要
 - 📊 **可观测性**：结构化 JSON 日志（request-id 贯穿）、Prometheus 指标（HTTP/LLM/工具/Agent 迭代全维度）、会话 Trace API
-- 🖥 **全栈 UI**：React + TS 流式聊天、计划时间线、工单卡片、决策链路面板、设备台账、知识库管理
+- 🖥 **全栈 HUD UI**：React 18 + TS，**React-Three-Fiber 3D 设备核心**（lazy + Suspense 分包）、**Canvas 示波器 + 手写 radix-2 FFT**（真实传感器数据 + 峰值保持 + BPFO 标记）、**SVG 径向仪表**（ISO 分区 spring 指针）、**动画 DAG 计划图**（流动虚线）、Framer Motion 全局动效、扫描线/网格 HUD 视觉语言
 - ⚙️ **工程化**：45 个 pytest 用例（含真实 MCP 子进程 IPC 测试）、ruff + mypy 全绿、GitHub Actions CI、Docker 一键部署
 
 ## 架构
