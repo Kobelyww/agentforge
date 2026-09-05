@@ -55,7 +55,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         provider_llms: list[BaseLLM] = [registry.get(n) for n in registry.names()]
         embedder = build_embedder(cfg.rag.embedder, provider_llms)
         retriever = Retriever(db, embedder, cfg)
-        tool_registry = build_default_registry(cfg, db, retriever)
+        tool_registry = build_default_registry(cfg, db, retriever, registry=registry)
 
         # Seed the ForgeOps domain knowledge base on first boot (idempotent).
         from agentforge.forgeops.seed import seed_knowledge_base

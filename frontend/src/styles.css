@@ -354,3 +354,20 @@ body {
 .eq-status.alarm { background: rgba(248, 81, 73, 0.15); color: var(--red); }
 .eq-status.watch { background: rgba(210, 153, 34, 0.15); color: var(--amber); }
 .eq-status.ok { background: rgba(63, 185, 80, 0.15); color: var(--green); }
+
+/* ---------- HITL approval card ---------- */
+.approval-card {
+  background: rgba(210, 153, 34, 0.08);
+  border: 1px solid rgba(210, 153, 34, 0.55);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  max-width: 680px;
+}
+.approval-header { font-weight: 700; color: var(--amber); font-size: 13px; margin-bottom: 6px; }
+.approval-message { font-size: 13.5px; margin-bottom: 8px; }
+.approval-payload {
+  background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+  padding: 10px; font-family: var(--mono); font-size: 12px;
+  overflow-x: auto; margin: 0 0 10px; max-height: 220px; overflow-y: auto;
+}
+.approval-actions { display: flex; gap: 10px; }

@@ -131,7 +131,7 @@ async def test_trace_endpoint(client):
     assert trace["plan"] and len(trace["plan"]["steps"]) == 3
     assert len(trace["steps"]) == 3
     assert all(step["tools"] for step in trace["steps"])
-    assert trace["totals"]["tool_calls"] == 3
+    assert trace["totals"]["tool_calls"] == 4  # rag + 2 parallel subagent dispatches + work order
     assert "轴承外圈磨损" in (trace["final"] or "")
 
 

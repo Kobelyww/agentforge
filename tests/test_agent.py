@@ -82,7 +82,7 @@ async def test_plan_execute_flow(settings):
     registry = ProviderRegistry(settings.providers, settings.default_model)
     embedder = build_embedder("hashing", [])
     retriever = Retriever(db, embedder, settings)
-    tools = build_default_registry(settings, db, retriever)
+    tools = build_default_registry(settings, db, retriever, registry=registry)
     agent = Agent(db, registry, tools, settings, retriever=retriever)
 
     session_id = db.create_session("t2").id
@@ -96,8 +96,11 @@ async def test_plan_execute_flow(settings):
     assert "plan_created" in types
     assert types.count("step_started") == 3
     assert types.count("step_completed") == 3
+    # s2 fans out TWO dispatch_subagent calls in a single turn (parallel)
     tool_names = [e.data["name"] for e in events if e.type == "tool_end"]
-    assert tool_names == ["rag_search", "sensor_analysis", "create_work_order"]
+    assert tool_names == ["rag_search", "dispatch_subagent", "dispatch_subagent", "create_work_order"]
+    parallel_meta = [e.data for e in events if e.type == "tool_end" and e.data["name"] == "dispatch_subagent"]
+    assert all(m.get("ok") for m in parallel_meta)
 
     # work order persisted exactly once (no orchestration-loop duplication)
     assert db.count_work_orders() == 1

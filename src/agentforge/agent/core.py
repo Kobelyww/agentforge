@@ -17,8 +17,10 @@ it to SSE and the eval harness can consume it without a server.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -26,6 +28,7 @@ from typing import Any
 from agentforge.agent.context import build_llm_messages
 from agentforge.agent.memory import SessionMemory
 from agentforge.agent.prompts import (
+    CRITIC_SYSTEM,
     EXECUTOR_SYSTEM,
     PLANNER_SYSTEM,
     SYNTHESIZER_SYSTEM,
@@ -38,6 +41,7 @@ from agentforge.llm.types import (
     ProviderError,
     Routed,
     TextDelta,
+    ToolCall,
     ToolCallDelta,
     ToolSpec,
     estimate_tokens,
@@ -126,6 +130,7 @@ class Agent:
         model: str | None = None,
         max_iterations: int | None = None,
         orchestrator: str | None = None,
+        auto_approve: bool | None = None,
     ) -> Any:  # AsyncIterator[AgentEvent]
         """Execute one user turn; yields AgentEvent stream."""
         orchestrator = orchestrator or getattr(self._settings.agent, "orchestrator", "react")
@@ -163,6 +168,7 @@ class Agent:
             workspace=self._settings.data_dir / "workspace" / session_id,
             settings=self._settings,
             retriever=self._retriever,
+            auto_approve=self._settings.agent.auto_approve if auto_approve is None else auto_approve,
         )
         specs: list[ToolSpec] = self._tools.specs()
 
@@ -289,13 +295,49 @@ class Agent:
                     yield AgentEvent("assistant_message", {"message": _row_to_dict(assistant_row)})
                     return
 
-                # Execute every requested tool, feed results back.
+                # Execute every requested tool — in parallel when the model
+                # emitted several at once. Each call gets its own event bridge
+                # drained while tasks run, so long-running tools (HITL
+                # approval) stream events to the client *during* execution.
+                bridges: dict[str, asyncio.Queue] = {}
+                tasks: dict[str, asyncio.Task] = {}
+                emitted_by_call: dict[str, list[dict]] = {}
                 for call in tool_calls:
+                    bridge: asyncio.Queue = asyncio.Queue()
+                    call_ctx = dataclasses.replace(tool_ctx, emit=bridge.put)
+                    bridges[call.id] = bridge
+                    tasks[call.id] = asyncio.create_task(self._tools.run(call, call_ctx))
+                    emitted_by_call[call.id] = []
                     yield AgentEvent(
                         "tool_start",
                         {"call_id": call.id, "name": call.name, "arguments": call.arguments},
                     )
-                    result = await self._tools.run(call, tool_ctx)
+
+                async def _drain(call_id: str, bridge: asyncio.Queue, sink: list[dict]) -> Any:
+                    while not bridge.empty():
+                        payload = bridge.get_nowait()
+                        sink.append(payload)
+                        yield AgentEvent(payload.get("type", "tool_event"), payload)
+
+                pending = set(tasks.values())
+                while pending:
+                    done, pending = await asyncio.wait(
+                        pending, timeout=0.25, return_when=asyncio.FIRST_COMPLETED
+                    )
+                    for call in tool_calls:
+                        async for ev in _drain(call.id, bridges[call.id], emitted_by_call[call.id]):
+                            yield ev
+
+                outcomes: list[tuple[ToolCall, Any, list[dict]]] = []
+                for call in tool_calls:
+                    async for ev in _drain(call.id, bridges[call.id], emitted_by_call[call.id]):
+                        yield ev  # final drain
+                    result = await tasks[call.id]
+                    outcomes.append((call, result, emitted_by_call[call.id]))
+
+                for call, result, emitted in outcomes:
+                    for payload in emitted:
+                        yield AgentEvent(payload.get("type", "tool_event"), payload)
                     seq += 1
                     tool_row = Message(
                         session_id=session_id, seq=seq, role="tool",
@@ -352,6 +394,17 @@ class Agent:
         max_iterations: int,
     ) -> Any:  # AsyncIterator[AgentEvent]
         provider = self._registry.get(provider_name)
+
+        # ---- 0. Long-term memory recall (MemGPT-style injection) ----
+        memory_notes = await asyncio.to_thread(self._recall_memories, task)
+        if memory_notes:
+            history.append(
+                ChatMessage(
+                    role="system",
+                    content="【长期记忆】与本任务相关的历史诊断记录：\n" + "\n".join(memory_notes),
+                )
+            )
+            yield AgentEvent("memory_recalled", {"memories": memory_notes})
 
         # ---- 1. Plan ----
         yield AgentEvent("phase", {"phase": "planning"})
@@ -462,17 +515,95 @@ class Agent:
             yield AgentEvent("error", {"message": f"汇总失败: {exc}"})
             return
 
-        final_text = final_response.message.content or step_results[-1]["summary"] if step_results else ""
+        final_text = final_response.message.content or (step_results[-1]["summary"] if step_results else "")
+
+        # ---- 4. Critic / self-refinement (Reflexion-style) ----
+        # The critic reviews the synthesized answer against step evidence and
+        # may force ONE revision with concrete issues. Bounded to a single
+        # retry: unbounded self-loops burn tokens for marginal gains.
+        revised = False
+        try:
+            critic_response = await provider.complete(
+                [
+                    ChatMessage(role="system", content=CRITIC_SYSTEM),
+                    ChatMessage(
+                        role="user",
+                        content=f"用户任务：{task}\n\n步骤结果：\n{transcript}\n\n待审核的最终回答：\n{final_text}",
+                    ),
+                ],
+                model=model_name or None,
+            )
+        except ProviderError as exc:
+            logger.warning("critic pass failed, accepting draft answer: %s", exc)
+            critic_response = None
+
+        verdict: dict[str, Any] = (
+            _parse_critic(critic_response.message.content) if critic_response else {"pass": True, "issues": []}
+        )
+        if not verdict["pass"]:
+            revised = True
+            yield AgentEvent("critic_verdict", {"pass": False, "issues": verdict["issues"]})
+            try:
+                revision_response = await provider.complete(
+                    [
+                        ChatMessage(role="system", content=SYNTHESIZER_SYSTEM),
+                        ChatMessage(
+                            role="user",
+                            content=(
+                                f"用户任务：{task}\n\n步骤结果：\n{transcript}\n\n"
+                                f"你之前的回答未通过质量审核，问题：{'；'.join(str(i) for i in verdict['issues'])}\n"
+                                "请修正后重新输出最终回答。"
+                            ),
+                        ),
+                    ],
+                    model=model_name or None,
+                )
+                final_text = revision_response.message.content or final_text
+            except ProviderError as exc:
+                yield AgentEvent("error", {"message": f"修订失败: {exc}"})
+                return
+        yield AgentEvent("critic_verdict", {"pass": True, "issues": [], "revised": revised})
+
         seq = await asyncio.to_thread(self._db.next_seq, session_id)
         seq += 1
         final_row = Message(
             session_id=session_id, seq=seq, role="assistant", content=final_text,
             tokens=estimate_tokens(final_text),
             latency_ms=round((final_response.usage.total_tokens) * 1.0, 1) if final_response.usage else 0.0,
-            meta={"kind": "final", "provider": final_response.provider, "model": final_response.model},
+            meta={"kind": "final", "provider": final_response.provider, "model": final_response.model,
+                  "critic_revised": revised},
         )
         await asyncio.to_thread(self._db.add_message, final_row)
         yield AgentEvent("assistant_message", {"message": _row_to_dict(final_row)})
+
+    # ---------- long-term memory ----------
+    _EQUIPMENT_RE = re.compile(r"\b([A-Z]{2,4}-?\d{2,4})\b")
+
+    def _recall_memories(self, task: str) -> list[str]:
+        """Fetch durable memories relevant to the equipment mentioned in the task."""
+        equipment_ids = set(self._EQUIPMENT_RE.findall(task.upper()))
+        notes: list[str] = []
+        for equipment_id in equipment_ids or [None]:
+            for m in self._db.list_memories(equipment_id=equipment_id, limit=3):
+                notes.append(f"- {m.content}")
+        return notes[:5]
+
+
+def _parse_critic(text: str | None) -> dict[str, Any]:
+    """Parse a critic verdict JSON; default to pass on malformed output."""
+    if not text:
+        return {"pass": True, "issues": []}
+    start = text.find("{")
+    if start == -1:
+        return {"pass": True, "issues": []}
+    try:
+        data, _ = json.JSONDecoder().raw_decode(text[start:])
+    except json.JSONDecodeError:
+        return {"pass": True, "issues": []}
+    if not isinstance(data, dict):
+        return {"pass": True, "issues": []}
+    issues: list[str] = [str(i) for i in list(data.get("issues", [])) if str(i).strip()]
+    return {"pass": bool(data.get("pass", True)) and not issues, "issues": issues}
 
 
 def served_provider_name(fallback: str, response: Any) -> str:

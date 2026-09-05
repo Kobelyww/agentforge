@@ -25,16 +25,25 @@
 | 行业 Agent 落地难点 | 本项目的解法 | 实现位置 |
 |---|---|---|
 | **长任务不可靠**：多步任务跑偏、中途失败全部重来 | **Plan-and-Execute 编排**：Planner 显式拆解计划 → Executor 分步执行（每步独立 ReAct 循环）→ Synthesizer 汇总结论；每步完成即持久化，部分进度不丢 | [`agent/core.py`](src/agentforge/agent/core.py) |
+| **单代理能力天花板**：复杂诊断需要多角色协作 | **多智能体子代理**（Claude Code 式）：主代理并行派出知识研究员/数据分析师（独立上下文+受限工具集+防递归），汇总报告 | [`tools/subagent.py`](src/agentforge/tools/subagent.py) |
+| **高风险操作失控**：P1/P2 工单直接中断生产 | **Human-in-the-Loop 审批门**：P1/P2 工单创建前挂起等待人工批准（SSE 内实时等待，UI 批准/拒绝），拒绝结果回传模型自行调整 | [`forgeops/tools.py`](src/agentforge/forgeops/tools.py) |
+| **结论不可信**：LLM 自我说服无复核 | **Reflexion 自我批判**：Critic 对照步骤证据审核最终回答（数值一致性），不通过强制修订一轮 | [`agent/core.py`](src/agentforge/agent/core.py) |
+| **不越用越懂业务**：每次会话从零开始 | **长期记忆**（MemGPT 式）：工单生成即沉淀设备维度诊断记忆，跨会话自动召回注入 | [`persistence/models.py`](src/agentforge/persistence/models.py) |
 | **工具生态碎片化**：每个集成都要写胶水代码 | **MCP 协议接入**：作为 MCP Client 通过 stdio JSON-RPC 挂载外部工具服务器（故障即降级，不影响平台）；自身能力也可封装为 MCP Server 供 Claude Desktop / Cursor 等使用 | [`mcp_client.py`](src/agentforge/mcp_client.py) · [示例 Server](examples/mcp_servers/maintenance_calculator.py) |
 | **输出不可控**：LLM 自由文本无法对接业务系统 | **结构化产出 Guardrail**：维修工单必须通过 JSON Schema 校验（字段/枚举/类型），不合法的参数作为错误回传给模型自我纠正；合法工单落库可查 | [`forgeops/tools.py`](src/agentforge/forgeops/tools.py) |
 | **黑盒难调试**：不知道 Agent 为什么这么做 | **全链路 Trace**：计划→步骤→每次工具调用（参数/结果/耗时）→ token 成本，全部从持久化审计日志重建，重启不丢，UI 一键查看 | [`routes/chat.py`](src/agentforge/server/routes/chat.py) · Trace 面板 |
-| **效果无法度量**："感觉变好了"不是工程语言 | **行业评测集 + CI 回归门禁**：4 个诊断场景断言工具编排序列与结论内容，`agentforge eval` 一键回归，CI 低于阈值即失败 | [`examples/suites/forgeops.yaml`](examples/suites/forgeops.yaml) |
+| **效果无法度量**："感觉变好了"不是工程语言 | **行业评测集 + CI 回归门禁**：诊断场景断言工具编排序列与结论内容，`agentforge eval` 一键回归，CI 低于阈值即失败 | [`examples/suites/forgeops.yaml`](examples/suites/forgeops.yaml) |
 
 此外，**安全底线**内建：代码执行跑在带 CPU/内存 RLIMIT + 墙钟超时的子进程沙箱；网页抓取有 SSRF 防护（私网地址/重定向逐跳校验）；API Key 认证与令牌桶限流默认开启。
 
 ## 核心功能
 
 - 🧠 **双编排模式**：ReAct（快速问答）/ Plan-and-Execute（复杂诊断），SSE 实时推送计划与步骤进度
+- 🤖 **多智能体**：`dispatch_subagent` 并行派出专家子代理（知识研究员/数据分析师），隔离上下文 + 受限工具集 + 防递归
+- 🧐 **Reflexion 审核**：Critic 对照证据审查结论，不通过带意见修订一轮
+- ✋ **Human-in-the-Loop**：P1/P2 工单创建前挂起等待人工批准（UI 实时审批）
+- 🧠 **长期记忆**：设备维度诊断记忆跨会话沉淀与召回
+- ⚡ **并行工具执行**：单轮多工具 asyncio 并发，事件桥实时流式
 - 🔌 **多厂商 LLM 网关**：OpenAI 兼容协议（OpenAI / GLM / DeepSeek / Kimi / Qwen / **华为云 ModelArts MaaS** / Ollama / vLLM）+ Anthropic，统一抽象，指数退避重试 + **部分输出不重复的跨厂商故障转移**
 - 🛠 **沙箱工具**：`python_repl`（子进程沙箱代码解释器）、`sensor_analysis`（numpy FFT 频谱分析）、`rag_search`、`web_fetch`（SSRF 防护）、`create_work_order`（Schema 校验工单）、MCP 外部工具
 - 📚 **混合检索 RAG**：BM25（jieba 中文分词）+ 向量检索（本地确定性 Hashing Embedding 兜底 / Provider Embedding），RRF 融合，Markdown 结构感知分块
@@ -210,6 +219,7 @@ agentforge/
 
 ## 文档
 
+- [前沿技术吸收地图](docs/advanced-agent.md) — 子代理/并行工具/HITL/Reflexion/长期记忆各自落在哪行代码
 - [架构详解](docs/architecture.md) — 模块交互、Plan-and-Execute 时序、数据流
 - [设计决策 (ADR)](docs/decisions.md) — 为什么自研运行时、为什么 SQLite、沙箱威胁模型、failover 为什么不允许部分输出后切换……
 

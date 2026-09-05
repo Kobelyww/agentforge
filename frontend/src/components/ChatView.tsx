@@ -12,15 +12,19 @@ interface Props {
   model: string | null;
   orchestrator: string;
   sessionId: string | null;
+  onDecide: (approvalId: string, decision: "approved" | "rejected") => void;
 }
 
 const PHASE_LABEL: Record<string, string> = {
   planning: "📋 规划中…",
   executing: "⚙️ 分步执行中…",
   synthesizing: "🧩 汇总结论中…",
+  critiquing: "🧐 质量审核中…",
+  critiquing_revise: "🔁 审核未通过，修订中…",
+  critiquing_done: "",
 };
 
-export default function ChatView({ chat, onStop, model, orchestrator, sessionId }: Props) {
+export default function ChatView({ chat, onStop, model, orchestrator, sessionId, onDecide }: Props) {
   const [input, setInput] = useState("");
   const [traceOpen, setTraceOpen] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -90,6 +94,27 @@ export default function ChatView({ chat, onStop, model, orchestrator, sessionId 
             </div>
           </div>
         ))}
+        {chat.approval && (
+          <div className="approval-card">
+            <div className="approval-header">⚠ 需要人工批准 · Human-in-the-Loop</div>
+            <div className="approval-message">{chat.approval.message}</div>
+            <pre className="approval-payload">{JSON.stringify(chat.approval.payload, null, 2)}</pre>
+            <div className="approval-actions">
+              <button
+                className="btn-primary"
+                onClick={() => onDecide(chat.approval!.approval_id, "approved")}
+              >
+                ✓ 批准
+              </button>
+              <button
+                className="btn-stop"
+                onClick={() => onDecide(chat.approval!.approval_id, "rejected")}
+              >
+                ✗ 拒绝
+              </button>
+            </div>
+          </div>
+        )}
         {chat.error && <div className="chat-error">⚠ {chat.error}</div>}
         <div ref={bottomRef} />
       </div>

@@ -39,11 +39,12 @@ interface ChatState {
   plan: UIPlan | null;
   steps: UIStep[];
   phase: string | null;
+  approval: { approval_id: string; message: string; payload: Record<string, unknown> } | null;
 }
 
 export function useChat(sessionId: string | null, onSessionUpdated: () => void) {
   const [state, setState] = useState<ChatState>({
-    messages: [], busy: false, error: null, plan: null, steps: [], phase: null,
+    messages: [], busy: false, error: null, plan: null, steps: [], phase: null, approval: null,
   });
   const abortRef = useRef<AbortController | null>(null);
 
@@ -131,6 +132,18 @@ export function useChat(sessionId: string | null, onSessionUpdated: () => void) 
             ),
           }));
           break;
+        case "approval_required":
+          setState((prev) => ({
+            ...prev,
+            approval: { approval_id: event.approval_id, message: event.message, payload: event.payload },
+          }));
+          break;
+        case "critic_verdict":
+          setState((prev) => ({
+            ...prev,
+            phase: event.pass ? "critiquing_done" : "critiquing_revise",
+          }));
+          break;
         case "assistant_message":
           setState((prev) => ({
             ...prev,
@@ -145,7 +158,7 @@ export function useChat(sessionId: string | null, onSessionUpdated: () => void) 
           setState((prev) => ({ ...prev, error: event.message }));
           break;
         case "done":
-          setState((prev) => ({ ...prev, busy: false, phase: null }));
+          setState((prev) => ({ ...prev, busy: false, phase: null, approval: null }));
           onSessionUpdated();
           break;
       }
@@ -154,7 +167,7 @@ export function useChat(sessionId: string | null, onSessionUpdated: () => void) 
   );
 
   const send = useCallback(
-    async (content: string, model: string | null, orchestrator?: string | null) => {
+    async (content: string, model: string | null, orchestrator?: string | null, autoApprove?: boolean) => {
       if (!sessionId || state.busy || !content.trim()) return;
       const controller = new AbortController();
       abortRef.current = controller;
@@ -170,7 +183,7 @@ export function useChat(sessionId: string | null, onSessionUpdated: () => void) 
         ],
       }));
       try {
-        await streamChat(sessionId, content, model, handleEvent, controller.signal, orchestrator);
+        await streamChat(sessionId, content, model, handleEvent, controller.signal, orchestrator, autoApprove);
       } catch (err) {
         if ((err as Error).name !== "AbortError") {
           setState((prev) => ({ ...prev, error: (err as Error).message }));
@@ -193,7 +206,7 @@ export function useChat(sessionId: string | null, onSessionUpdated: () => void) 
   }, []);
 
   const setMessages = useCallback((messages: UIMessage[]) => {
-    setState({ messages, busy: false, error: null, plan: null, steps: [], phase: null });
+    setState({ messages, busy: false, error: null, plan: null, steps: [], phase: null, approval: null });
   }, []);
 
   return { ...state, send, stop, setMessages };

@@ -52,6 +52,9 @@ providers:
 agent:
   # 单轮对话内 ReAct 最大迭代次数
   max_iterations: 8
+  # Human-in-the-loop：False 时 P1/P2 工单创建前等待人工批准（/api/forgeops/approvals）
+  # 默认 true（全自动，CI/评测友好）；演示 HITL 时改为 false 或在请求里传 auto_approve:false
+  auto_approve: true
   # 上下文 token 预算（估算值），超出后触发历史裁剪/摘要
   context_budget_tokens: 12000
   # 历史超过该 token 数时触发 LLM 摘要压缩
@@ -60,6 +63,8 @@ agent:
   enabled_tools: [python_repl, web_fetch, rag_search]
 
 tools:
+  create_work_order:
+    timeout_seconds: 300   # HITL 审批等待的上限
   python_repl:
     timeout_seconds: 20
     memory_limit_mb: 512

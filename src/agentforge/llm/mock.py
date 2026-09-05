@@ -48,8 +48,8 @@ _CANNED_PLAN = {
         },
         {
             "id": "s2",
-            "title": "数据分析",
-            "instruction": "使用 sensor_analysis 分析设备 AC-017 的振动传感器数据（operation=spectrum_peaks），找出主要峰值频率；如需进一步计算可用 python_repl。",
+            "title": "并行诊断",
+            "instruction": "使用 dispatch_subagent 并行派出知识研究员（检索手册判据与历史案例）和数据分析师（分析 AC-017 振动频谱数据），汇总两份报告。",
         },
         {
             "id": "s3",
@@ -126,7 +126,12 @@ class MockLLM(BaseLLM):
             output = (last.content or "").strip()
             if len(output) > 400:
                 output = output[:400] + "…"
-            if "步骤执行器" in system_text:
+            if "子代理" in system_text:
+                reply = (
+                    f"【子代理报告】基于授权工具的执行结果 — {output[:240]}\n"
+                    "以上为本角色的独立结论，已交由主代理汇总。"
+                )
+            elif "步骤执行器" in system_text:
                 # Step conclusion after a tool result — includes confidence so
                 # the synthesizer can quote it deterministically.
                 reply = (
@@ -190,6 +195,28 @@ class MockLLM(BaseLLM):
                         },
                         ensure_ascii=False,
                     ),
+                )
+                yield Finish("tool_calls")
+                return
+            # multi-agent fan-out step: dispatch two specialists in ONE turn
+            if "dispatch_subagent" in tool_names and ("并行" in instruction or "子代理" in instruction or "dispatch" in instruction):
+                yield ToolCallDelta(
+                    index=0,
+                    id="call_mock_sub_rag",
+                    name="dispatch_subagent",
+                    arguments_delta=json.dumps({"specialists": [
+                        {"role": "knowledge_researcher",
+                         "task": "检索设备手册中振动异常的判据与 6205 轴承故障特征频率，以及空压机轴承故障的历史案例"},
+                    ]}, ensure_ascii=False),
+                )
+                yield ToolCallDelta(
+                    index=1,
+                    id="call_mock_sub_data",
+                    name="dispatch_subagent",
+                    arguments_delta=json.dumps({"specialists": [
+                        {"role": "data_analyst",
+                         "task": "分析设备 AC-017 的振动传感器数据（operation=spectrum_peaks），给出主峰频率与 ISO 10816 状态"},
+                    ]}, ensure_ascii=False),
                 )
                 yield Finish("tool_calls")
                 return

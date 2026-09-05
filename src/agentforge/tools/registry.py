@@ -82,8 +82,12 @@ class ToolRegistry:
         return result
 
 
-def build_default_registry(settings: Settings, db: Database, retriever=None) -> ToolRegistry:
-    """Instantiate the tools enabled in settings."""
+def build_default_registry(settings: Settings, db: Database, retriever=None, registry=None) -> ToolRegistry:
+    """Instantiate the tools enabled in settings.
+
+    ``registry`` (the provider registry) is required for the multi-agent
+    ``dispatch_subagent`` tool; without it that tool is skipped.
+    """
     from agentforge.tools.python_repl import PythonREPLTool
     from agentforge.tools.rag_search import RagSearchTool
     from agentforge.tools.web_fetch import WebFetchTool
@@ -120,6 +124,20 @@ def build_default_registry(settings: Settings, db: Database, retriever=None) -> 
     except ImportError:  # pragma: no cover
         pass
 
+    # Multi-agent dispatch (needs the provider registry to run sub-agents).
+    # Attached after the full registry exists so it can whitelist from it;
+    # the sub-agent loop itself excludes dispatch_subagent (no recursion).
     enabled = settings.agent.enabled_tools or list(candidates)
     tools = {name: tool for name, tool in candidates.items() if name in enabled}
-    return ToolRegistry(tools, settings, db)
+    tool_registry = ToolRegistry(tools, settings, db)
+    # dispatch_subagent lives outside `candidates` (it needs the finished
+    # registry to whitelist from), so its enablement is checked separately.
+    if registry is not None and "dispatch_subagent" in (settings.agent.enabled_tools or ["dispatch_subagent"]):
+        from agentforge.tools.subagent import DispatchSubagentTool
+
+        limits = settings.tool_limits("dispatch_subagent")
+        tool_registry.tools["dispatch_subagent"] = DispatchSubagentTool(
+            registry, tool_registry, settings, db,
+            timeout=limits.timeout_seconds,
+        )
+    return tool_registry

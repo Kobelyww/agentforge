@@ -124,7 +124,7 @@ def main(argv: list[str] | None = None) -> int:
         registry = ProviderRegistry(settings.providers, settings.default_model)
         embedder = build_embedder(settings.rag.embedder, [registry.get(n) for n in registry.names()])
         retriever = Retriever(db, embedder, settings)
-        tools = build_default_registry(settings, db, retriever)
+        tools = build_default_registry(settings, db, retriever, registry=registry)
         agent = Agent(db, registry, tools, settings, retriever=retriever)
         cases = load_cases(args.suite)
 

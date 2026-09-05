@@ -12,12 +12,15 @@ from sqlalchemy.orm import Session as ORMSession
 from sqlalchemy.orm import sessionmaker
 
 from agentforge.persistence.models import (
+    Approval,
     Base,
     Chunk,
     Document,
+    Memory,
     Message,
     ToolInvocation,
     WorkOrder,
+    utcnow,
 )
 from agentforge.persistence.models import (
     Session as ChatSession,
@@ -199,6 +202,51 @@ class Database:
             wo.status = status
             db.commit()
             return wo
+
+    # ---- approvals (human-in-the-loop) ----
+    def add_approval(self, approval: Approval) -> Approval:
+        with self.session() as db:
+            db.add(approval)
+            db.commit()
+            return approval
+
+    def get_approval(self, approval_id: str) -> Approval | None:
+        with self.session() as db:
+            return db.get(Approval, approval_id)
+
+    def decide_approval(self, approval_id: str, decision: str, decided_by: str = "user") -> Approval | None:
+        if decision not in ("approved", "rejected"):
+            return None
+        with self.session() as db:
+            approval = db.get(Approval, approval_id)
+            if approval is None or approval.status != "pending":
+                return approval
+            approval.status = decision
+            approval.decided_by = decided_by
+            approval.decided_at = utcnow()
+            db.commit()
+            return approval
+
+    def list_approvals(self, session_id: str | None = None, limit: int = 50) -> list[Approval]:
+        with self.session() as db:
+            stmt = select(Approval).order_by(desc(Approval.created_at)).limit(limit)
+            if session_id:
+                stmt = stmt.where(Approval.session_id == session_id)
+            return list(db.scalars(stmt))
+
+    # ---- long-term memory ----
+    def add_memory(self, memory: Memory) -> Memory:
+        with self.session() as db:
+            db.add(memory)
+            db.commit()
+            return memory
+
+    def list_memories(self, equipment_id: str | None = None, limit: int = 20) -> list[Memory]:
+        with self.session() as db:
+            stmt = select(Memory).order_by(desc(Memory.created_at)).limit(limit)
+            if equipment_id:
+                stmt = stmt.where(Memory.equipment_id == equipment_id)
+            return list(db.scalars(stmt))
 
     def health_check(self) -> bool:
         try:

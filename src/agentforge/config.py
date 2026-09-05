@@ -55,6 +55,10 @@ class AgentConfig(BaseModel):
     enabled_tools: list[str] = Field(default_factory=list)
     # react | plan_execute
     orchestrator: str = "react"
+    # Human-in-the-loop: when False, P1/P2 work-order creation waits for an
+    # explicit approval decision (per-request override possible). Default True
+    # keeps the zero-config demo & CI autonomous.
+    auto_approve: bool = True
 
 
 class MCPServerSpec(BaseModel):

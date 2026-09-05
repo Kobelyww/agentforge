@@ -9,17 +9,26 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import time
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
 from agentforge.persistence.db import Database
-from agentforge.persistence.models import WorkOrder
+from agentforge.persistence.models import Approval, Memory, WorkOrder
 from agentforge.tools.base import Tool, ToolContext, ToolResult, validate_args
 
 _DATA_DIR = Path(__file__).resolve().parent / "data"
 _ALARMS = {"good": 2.8, "allow": 4.5, "alarm": 7.1}  # ISO 10816-3 (rigid, medium machines)
+
+
+async def _maybe_await(value: Any) -> None:
+    """Support sync and async emit callables."""
+    if asyncio.iscoroutine(value):
+        await value
 
 
 def load_equipment() -> list[dict]:
@@ -163,6 +172,52 @@ class CreateWorkOrderTool(Tool):
         if not 0.0 <= float(args["confidence"]) <= 1.0:
             return ToolResult(ok=False, output="", error="confidence must be within [0, 1]")
 
+        # ---- Human-in-the-loop gate ----
+        # P1/P2 orders interrupt real production, so unless running in
+        # auto-approve mode (CI/eval/zero-config demo) they wait for an
+        # explicit human decision, streaming an approval_required event to
+        # the UI while polling.
+        approval = None
+        needs_approval = (not ctx.auto_approve) and args["priority"] in ("P1", "P2")
+        if needs_approval:
+            approval = self._db.add_approval(
+                Approval(
+                    session_id=ctx.session_id,
+                    action="create_work_order",
+                    payload=dict(args),
+                )
+            )
+            if ctx.emit is not None:
+                await _maybe_await(ctx.emit({
+                    "type": "approval_required",
+                    "approval_id": approval.id,
+                    "action": "create_work_order",
+                    "payload": dict(args),
+                    "message": f"创建 {args['priority']} 级维修工单需要人工批准",
+                }))
+
+            deadline = time.monotonic() + max(self.timeout - 5.0, 5.0)
+            decision = "pending"
+            while time.monotonic() < deadline:
+                current = await asyncio.to_thread(self._db.get_approval, approval.id)
+                decision = current.status if current else "pending"
+                if decision != "pending":
+                    break
+                await asyncio.sleep(0.4)
+
+            if decision == "pending":
+                return ToolResult(
+                    ok=False, output="",
+                    error="审批等待超时，工单未创建。请重新发起。",
+                    meta={"approval_id": approval.id, "decision": "timeout"},
+                )
+            if decision == "rejected":
+                return ToolResult(
+                    ok=False, output="",
+                    error="用户拒绝了工单创建。请向用户确认后续处理方式。",
+                    meta={"approval_id": approval.id, "decision": "rejected"},
+                )
+
         seq = self._db.count_work_orders() + 1
         wo = self._db.add_work_order(
             WorkOrder(
@@ -178,6 +233,21 @@ class CreateWorkOrderTool(Tool):
                 estimated_hours=float(args.get("estimated_hours", 0.0)),
             )
         )
+
+        # Long-term memory: durable diagnosis facts keyed by equipment, so
+        # future sessions can recall this machine's history (MemGPT-style).
+        self._db.add_memory(
+            Memory(
+                session_id=ctx.session_id,
+                equipment_id=wo.equipment_id,
+                kind="diagnosis",
+                content=(
+                    f"{wo.equipment_id} 诊断为 {wo.fault_type}"
+                    f"（置信度 {wo.confidence:.2f}），生成工单 {wo.code}（{wo.priority}）"
+                ),
+            )
+        )
+
         payload = {
             "work_order_id": wo.code,
             "status": wo.status,
@@ -188,6 +258,7 @@ class CreateWorkOrderTool(Tool):
             "actions": wo.actions,
             "parts": wo.parts,
             "estimated_hours": wo.estimated_hours,
+            "approved_via": approval.id if approval else "auto",
         }
         return ToolResult(
             ok=True,

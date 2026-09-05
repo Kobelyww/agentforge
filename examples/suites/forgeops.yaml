@@ -10,12 +10,12 @@ cases:
     expect_tools: [python_repl]
     expect_contains: ["46762"]
 
-  - name: diagnosis_plan_execute_full_chain
-    description: 设备诊断应走规划-执行-汇总全链路，依次调用知识库/传感器/工单工具
+  - name: diagnosis_multi_agent_full_chain
+    description: 设备诊断应走规划-多智能体并行-汇总-审核全链路（子代理扇出+工单）
     input: 诊断 AC-017 空压机昨晚异响振动报警，给出结论并生成维修工单
     orchestrator: plan_execute
     max_iterations: 8
-    expect_tools: [rag_search, sensor_analysis, create_work_order]
+    expect_tools: [rag_search, dispatch_subagent, create_work_order]
     expect_contains: ["轴承外圈磨损", "0.87"]
 
   - name: knowledge_lookup_react

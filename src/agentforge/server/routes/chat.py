@@ -32,6 +32,10 @@ class ChatRequest(BaseModel):
     content: str = Field(min_length=1, max_length=32000)
     model: str | None = Field(default=None, description="provider/model, e.g. glm/glm-4-plus")
     orchestrator: str | None = Field(default=None, description="react | plan_execute")
+    auto_approve: bool | None = Field(
+        default=None,
+        description="False 启用 human-in-the-loop：P1/P2 工单创建前等待 /approvals 决定",
+    )
 
 
 # ---------- sessions ----------
@@ -94,7 +98,8 @@ async def chat(session_id: str, body: ChatRequest, request: Request):
         async def produce():
             try:
                 async for event in state.agent.run(
-                    session_id, body.content, model=body.model, orchestrator=body.orchestrator
+                    session_id, body.content, model=body.model,
+                    orchestrator=body.orchestrator, auto_approve=body.auto_approve,
                 ):
                     await queue.put(sse_event(event.type, event.data))
             except asyncio.CancelledError:

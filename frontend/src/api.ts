@@ -35,6 +35,11 @@ export const api = {
   listEquipment: () => request<Equipment[]>("/api/forgeops/equipment"),
   listWorkOrders: () => request<WorkOrder[]>("/api/forgeops/workorders"),
   getTrace: (sessionId: string) => request<SessionTrace>(`/api/sessions/${sessionId}/trace`),
+  decideApproval: (approvalId: string, decision: "approved" | "rejected") =>
+    request(`/api/forgeops/approvals/${approvalId}/decide`, {
+      method: "POST",
+      body: JSON.stringify({ decision }),
+    }),
 
   listDocs: () => request<DocInfo[]>("/api/documents"),
   uploadDoc: (file: File) => {
@@ -59,11 +64,16 @@ export async function streamChat(
   onEvent: (event: AgentEvent) => void,
   signal?: AbortSignal,
   orchestrator?: string | null,
+  autoApprove?: boolean,
 ): Promise<void> {
   const resp = await fetch(`${BASE}/api/sessions/${sessionId}/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ content, model, orchestrator: orchestrator || undefined }),
+    body: JSON.stringify({
+      content, model,
+      orchestrator: orchestrator || undefined,
+      auto_approve: autoApprove,
+    }),
     signal,
   });
   if (!resp.ok || !resp.body) {

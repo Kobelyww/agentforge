@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -17,12 +18,20 @@ _JSON_TYPES: dict[str, Any] = {
 
 @dataclass
 class ToolContext:
-    """Per-invocation execution context handed to tools."""
+    """Per-invocation execution context handed to tools.
+
+    ``emit`` lets a long-running tool push AgentEvents into the live SSE
+    stream while it works (e.g. an approval-requested notification before it
+    starts waiting on a human decision). ``auto_approve`` short-circuits
+    human-in-the-loop gates (CI / eval / zero-config demo mode).
+    """
 
     session_id: str | None
     workspace: Path
     settings: Settings
     retriever: Any | None = None  # agentforge.rag.retriever.Retriever
+    emit: Callable[[dict], Any] | None = None  # async: AgentEvent.as_dict()
+    auto_approve: bool = True
 
 
 @dataclass

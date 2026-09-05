@@ -129,3 +129,32 @@ class WorkOrder(Base):
     estimated_hours: Mapped[float] = mapped_column(Float, default=0.0)
     status: Mapped[str] = mapped_column(String(16), default="open")  # open | in_progress | done
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class Approval(Base):
+    """Human-in-the-loop gate: a pending high-priority action awaiting a decision."""
+
+    __tablename__ = "approvals"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)
+    session_id: Mapped[str | None] = mapped_column(String(32), index=True, nullable=True)
+    action: Mapped[str] = mapped_column(String(64))  # e.g. create_work_order
+    payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    status: Mapped[str] = mapped_column(String(16), default="pending")  # pending|approved|rejected
+    decided_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class Memory(Base):
+    """Long-term semantic memory: durable facts persisted across sessions."""
+
+    __tablename__ = "memories"
+    __table_args__ = (Index("ix_memories_equipment", "equipment_id"),)
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)
+    session_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    equipment_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    kind: Mapped[str] = mapped_column(String(32), default="diagnosis")  # diagnosis | preference | fact
+    content: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)

@@ -98,8 +98,16 @@ export default function App() {
   const diagnoseEquipment = async (equipment: Equipment) => {
     setPanel(null);
     setOrchestrator("plan_execute");
-    const session = await newSession();
-    chat.send(`诊断 ${equipment.id} ${equipment.name} 的运行状态：请检索知识库、分析振动数据，给出结论并生成维修工单`, null, "plan_execute");
+    await newSession();
+    // HITL demo: P1/P2 工单创建前需要人工批准
+    chat.send(
+      `诊断 ${equipment.id} ${equipment.name} 的运行状态：请检索知识库、分析振动数据，给出结论并生成维修工单`,
+      null, "plan_execute", false,
+    );
+  };
+
+  const decideApproval = async (approvalId: string, decision: "approved" | "rejected") => {
+    await api.decideApproval(approvalId, decision);
   };
 
   return (
@@ -123,7 +131,7 @@ export default function App() {
       />
       <main className="main">
         {activeId ? (
-          <ChatView chat={chat} onStop={chat.stop} model={model} orchestrator={orchestrator} sessionId={activeId} />
+          <ChatView chat={chat} onStop={chat.stop} model={model} orchestrator={orchestrator} sessionId={activeId} onDecide={decideApproval} />
         ) : (
           <Welcome
             onNewSession={newSession}

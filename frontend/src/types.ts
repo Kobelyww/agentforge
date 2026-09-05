@@ -121,6 +121,9 @@ export type AgentEvent =
       latency_ms: number;
     }
   | { type: "assistant_message"; message: ChatMessage }
+  | { type: "approval_required"; approval_id: string; action: string; payload: Record<string, unknown>; message: string }
+  | { type: "critic_verdict"; pass: boolean; issues: string[]; revised?: boolean }
+  | { type: "memory_recalled"; memories: string[] }
   | { type: "error"; message: string }
   | { type: "done"; session_id: string; elapsed_ms: number; final_text?: string };
 
